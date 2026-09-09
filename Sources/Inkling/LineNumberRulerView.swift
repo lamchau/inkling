@@ -1,15 +1,19 @@
 import AppKit
 
 @MainActor
-final class LineNumberRulerView: NSRulerView {
+final class LineNumberGutterView: NSView {
+    static let width: CGFloat = 44
+
+    override var isFlipped: Bool { true }
+
     private weak var textView: NSTextView?
+    private weak var scrollView: NSScrollView?
     private var lineStarts: [Int] = [0]
 
     init(scrollView: NSScrollView, textView: NSTextView) {
         self.textView = textView
-        super.init(scrollView: scrollView, orientation: .verticalRuler)
-        clientView = textView
-        ruleThickness = 44
+        self.scrollView = scrollView
+        super.init(frame: .zero)
         refresh()
     }
 
@@ -26,15 +30,15 @@ final class LineNumberRulerView: NSRulerView {
         needsDisplay = true
     }
 
-    override func drawHashMarksAndLabels(in rect: NSRect) {
+    override func draw(_ dirtyRect: NSRect) {
         guard let textView,
               let layoutManager = textView.layoutManager
         else { return }
 
         NSColor.controlBackgroundColor.setFill()
-        rect.fill()
+        dirtyRect.fill()
 
-        let visibleRect = textView.enclosingScrollView?.contentView.bounds ?? textView.visibleRect
+        let visibleRect = scrollView?.contentView.bounds ?? textView.visibleRect
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
             .foregroundColor: NSColor.tertiaryLabelColor,
@@ -52,20 +56,20 @@ final class LineNumberRulerView: NSRulerView {
                 effectiveRange: nil
             )
             let y = lineRect.minY + textView.textContainerInset.height - visibleRect.minY
-            guard y >= rect.minY - lineRect.height, y <= rect.maxY else { continue }
+            guard y >= dirtyRect.minY - lineRect.height, y <= dirtyRect.maxY else { continue }
 
             let label = "\(index + 1)" as NSString
             let size = label.size(withAttributes: attributes)
             label.draw(
-                at: NSPoint(x: ruleThickness - size.width - 8, y: y),
+                at: NSPoint(x: bounds.width - size.width - 8, y: y),
                 withAttributes: attributes
             )
         }
 
         NSColor.separatorColor.setStroke()
         let separator = NSBezierPath()
-        separator.move(to: NSPoint(x: ruleThickness - 0.5, y: rect.minY))
-        separator.line(to: NSPoint(x: ruleThickness - 0.5, y: rect.maxY))
+        separator.move(to: NSPoint(x: bounds.width - 0.5, y: dirtyRect.minY))
+        separator.line(to: NSPoint(x: bounds.width - 0.5, y: dirtyRect.maxY))
         separator.stroke()
     }
 }

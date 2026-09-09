@@ -1,6 +1,42 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class DiffEditorContainerView: NSView {
+    let scrollView: NSScrollView
+    let gutterView: LineNumberGutterView
+    var showsLineNumbers = false {
+        didSet {
+            gutterView.isHidden = !showsLineNumbers
+            needsLayout = true
+        }
+    }
+
+    init(scrollView: NSScrollView, gutterView: LineNumberGutterView) {
+        self.scrollView = scrollView
+        self.gutterView = gutterView
+        super.init(frame: .zero)
+        addSubview(gutterView)
+        addSubview(scrollView)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        let gutterWidth = showsLineNumbers ? LineNumberGutterView.width : 0
+        gutterView.frame = NSRect(x: 0, y: 0, width: gutterWidth, height: bounds.height)
+        scrollView.frame = NSRect(
+            x: gutterWidth,
+            y: 0,
+            width: max(0, bounds.width - gutterWidth),
+            height: bounds.height
+        )
+    }
+}
+
 struct DiffTextView: NSViewRepresentable {
     @Binding var text: String
     let highlights: [TextHighlight]
@@ -17,15 +53,15 @@ struct DiffTextView: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+    func makeNSView(context: Context) -> DiffEditorContainerView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.contentView.postsBoundsChangedNotifications = true
 
-        let textView = NSTextView()
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -34,36 +70,38 @@ struct DiffTextView: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.allowsUndo = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.textColor = .labelColor
+        textView.insertionPointColor = .controlAccentColor
+        textView.drawsBackground = true
+        textView.backgroundColor = .textBackgroundColor
+        textView.alignment = .left
+        textView.baseWritingDirection = .leftToRight
         textView.textContainerInset = NSSize(width: 12, height: 12)
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.textContainer?.containerSize = NSSize(
-            width: scrollView.contentSize.width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
         textView.textContainer?.widthTracksTextView = true
         textView.string = text
-        scrollView.documentView = textView
-        context.coordinator.textView = textView
-        context.coordinator.scrollView = scrollView
-        context.coordinator.rulerView = LineNumberRulerView(
+        let gutterView = LineNumberGutterView(
             scrollView: scrollView,
             textView: textView
         )
+        let containerView = DiffEditorContainerView(
+            scrollView: scrollView,
+            gutterView: gutterView
+        )
+        context.coordinator.textView = textView
+        context.coordinator.scrollView = scrollView
+        context.coordinator.gutterView = gutterView
         context.coordinator.observeScroll()
-        updateRuler(scrollView, coordinator: context.coordinator)
+        updateLineNumbers(containerView)
         Self.applyHighlights(highlights, to: textView)
-        return scrollView
+        return containerView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ containerView: DiffEditorContainerView, context: Context) {
         context.coordinator.parent = self
+        let scrollView = containerView.scrollView
         guard let textView = context.coordinator.textView else { return }
         if textView.string != text {
             let selectedRanges = textView.selectedRanges
@@ -73,9 +111,13 @@ struct DiffTextView: NSViewRepresentable {
                 NSMaxRange($0.rangeValue) <= text.utf16.count
             }
             context.coordinator.isApplyingUpdate = false
-            context.coordinator.rulerView?.refresh()
+            context.coordinator.gutterView?.refresh()
         }
-        updateRuler(scrollView, coordinator: context.coordinator)
+        updateLineNumbers(containerView)
+        scrollView.contentView.scroll(to: CGPoint(
+            x: 0,
+            y: scrollView.contentView.bounds.origin.y
+        ))
         Self.applyHighlights(highlights, to: textView)
 
         if context.coordinator.lastNavigationRevision != navigationRevision {
@@ -92,7 +134,7 @@ struct DiffTextView: NSViewRepresentable {
         {
             context.coordinator.isApplyingScroll = true
             scrollView.contentView.scroll(to: CGPoint(
-                x: scrollView.contentView.bounds.origin.x,
+                x: 0,
                 y: sharedScrollOrigin.y
             ))
             scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -117,7 +159,7 @@ struct DiffTextView: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ nsView: DiffEditorContainerView, coordinator: Coordinator) {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
@@ -126,26 +168,32 @@ struct DiffTextView: NSViewRepresentable {
             return
         }
         let fullRange = NSRange(location: 0, length: storage.length)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .left
+        paragraphStyle.baseWritingDirection = .leftToRight
+        paragraphStyle.lineBreakMode = .byWordWrapping
         storage.beginEditing()
         storage.setAttributes([
             .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: NSColor.textColor,
+            .paragraphStyle: paragraphStyle,
         ], range: fullRange)
         storage.endEditing()
+        textView.alignment = .left
+        textView.baseWritingDirection = .leftToRight
+        textView.typingAttributes = [
+            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+            .foregroundColor: NSColor.textColor,
+            .paragraphStyle: paragraphStyle,
+        ]
 
         layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
-        layoutManager.removeTemporaryAttribute(.font, forCharacterRange: fullRange)
         for highlight in highlights {
             let range = NSIntersectionRange(highlight.range, fullRange)
             guard range.length > 0 else { continue }
             layoutManager.addTemporaryAttribute(
                 .foregroundColor,
                 value: color(for: highlight.kind),
-                forCharacterRange: range
-            )
-            layoutManager.addTemporaryAttribute(
-                .font,
-                value: NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold),
                 forCharacterRange: range
             )
         }
@@ -171,10 +219,9 @@ struct DiffTextView: NSViewRepresentable {
         colors[index % colors.count]
     }
 
-    private func updateRuler(_ scrollView: NSScrollView, coordinator: Coordinator) {
-        scrollView.verticalRulerView = coordinator.rulerView
-        scrollView.hasVerticalRuler = showLineNumbers
-        scrollView.rulersVisible = showLineNumbers
+    private func updateLineNumbers(_ containerView: DiffEditorContainerView) {
+        containerView.showsLineNumbers = showLineNumbers
+        containerView.gutterView.needsDisplay = true
     }
 
     private func center(_ offset: Int, in textView: NSTextView, scrollView: NSScrollView) {
@@ -211,7 +258,7 @@ struct DiffTextView: NSViewRepresentable {
         var parent: DiffTextView
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
-        var rulerView: LineNumberRulerView?
+        weak var gutterView: LineNumberGutterView?
         let side: DiffSide
         var isApplyingUpdate = false
         var isApplyingScroll = false
@@ -243,13 +290,14 @@ struct DiffTextView: NSViewRepresentable {
                 x: 0,
                 y: scrollView.contentView.bounds.origin.y
             )
+            gutterView?.needsDisplay = true
             isPublishingScroll = false
         }
 
         func textDidChange(_ notification: Notification) {
             guard !isApplyingUpdate, let textView else { return }
             parent.text = textView.string
-            rulerView?.refresh()
+            gutterView?.refresh()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
