@@ -1,0 +1,637 @@
+import Foundation
+
+enum DiffEngine {
+    private static let matrixCellLimit = 250_000
+    private static let pairingThreshold = 0.5
+
+    static func compare(
+        left leftText: String,
+        right rightText: String,
+        ignoreWhitespace: Bool,
+        algorithm: DiffAlgorithm = .semantic
+    ) -> DiffResult {
+        let left = TextLines(leftText)
+        let right = TextLines(rightText)
+        let leftKeys = left.lines.map { normalized($0, ignoreWhitespace: ignoreWhitespace) }
+        let rightKeys = right.lines.map { normalized($0, ignoreWhitespace: ignoreWhitespace) }
+        let matches = orderedMatches(leftKeys, rightKeys)
+
+        var leftHighlights: [TextHighlight] = []
+        var rightHighlights: [TextHighlight] = []
+        var hunks: [DiffHunk] = []
+        var previousLeft = 0
+        var previousRight = 0
+        var nextPairColor = 0
+
+        for matchIndex in 0...matches.count {
+            let match = matchIndex < matches.count ? matches[matchIndex] : nil
+            let leftEnd = match?.left ?? left.lines.count
+            let rightEnd = match?.right ?? right.lines.count
+
+            if previousLeft < leftEnd || previousRight < rightEnd {
+                let hunkID = hunks.count
+                let leftRange = previousLeft..<leftEnd
+                let rightRange = previousRight..<rightEnd
+                let leftHighlightStart = leftHighlights.count
+                let rightHighlightStart = rightHighlights.count
+                let pairs = pairLines(
+                    left: Array(left.lines[leftRange]),
+                    right: Array(right.lines[rightRange]),
+                    ignoreWhitespace: ignoreWhitespace
+                )
+                var pairedLeft = Set<Int>()
+                var pairedRight = Set<Int>()
+
+                for pair in pairs {
+                    let leftLineIndex = leftRange.lowerBound + pair.left
+                    let rightLineIndex = rightRange.lowerBound + pair.right
+                    pairedLeft.insert(leftLineIndex)
+                    pairedRight.insert(rightLineIndex)
+                    let color = nextPairColor % 6
+                    nextPairColor += 1
+                    leftHighlights += characterHighlights(
+                        source: left.lines[leftLineIndex],
+                        other: right.lines[rightLineIndex],
+                        lineOffset: left.offsets[leftLineIndex],
+                        color: color,
+                        algorithm: algorithm,
+                        ignoreWhitespace: ignoreWhitespace
+                    )
+                    rightHighlights += characterHighlights(
+                        source: right.lines[rightLineIndex],
+                        other: left.lines[leftLineIndex],
+                        lineOffset: right.offsets[rightLineIndex],
+                        color: color,
+                        algorithm: algorithm,
+                        ignoreWhitespace: ignoreWhitespace
+                    )
+                }
+
+                for lineIndex in leftRange where !pairedLeft.contains(lineIndex) {
+                    if !ignoreWhitespace || !leftKeys[lineIndex].isEmpty {
+                        leftHighlights.append(fullLineHighlight(
+                            line: left.lines[lineIndex],
+                            offset: left.offsets[lineIndex],
+                            kind: .deletion
+                        ))
+                    }
+                }
+                for lineIndex in rightRange where !pairedRight.contains(lineIndex) {
+                    if !ignoreWhitespace || !rightKeys[lineIndex].isEmpty {
+                        rightHighlights.append(fullLineHighlight(
+                            line: right.lines[lineIndex],
+                            offset: right.offsets[lineIndex],
+                            kind: .addition
+                        ))
+                    }
+                }
+
+                if leftHighlights.count > leftHighlightStart
+                    || rightHighlights.count > rightHighlightStart {
+                    hunks.append(DiffHunk(
+                        id: hunkID,
+                        leftRange: leftRange,
+                        rightRange: rightRange,
+                        leftNavigationOffset: left.offset(at: leftRange.lowerBound),
+                        rightNavigationOffset: right.offset(at: rightRange.lowerBound)
+                    ))
+                }
+            }
+
+            if let match {
+                previousLeft = match.left + 1
+                previousRight = match.right + 1
+            }
+        }
+
+        return DiffResult(
+            leftHighlights: leftHighlights.filter { $0.range.length > 0 },
+            rightHighlights: rightHighlights.filter { $0.range.length > 0 },
+            hunks: hunks
+        )
+    }
+
+    private static func normalized(_ line: String, ignoreWhitespace: Bool) -> String {
+        guard ignoreWhitespace else { return line }
+        return line.filter { !$0.isWhitespace }
+    }
+
+    private static func orderedMatches(_ left: [String], _ right: [String]) -> [Match] {
+        guard !left.isEmpty, !right.isEmpty else { return [] }
+        guard left.count * right.count <= matrixCellLimit else {
+            var matches: [Match] = []
+            var prefix = 0
+            while prefix < min(left.count, right.count), left[prefix] == right[prefix] {
+                matches.append(Match(left: prefix, right: prefix))
+                prefix += 1
+            }
+
+            var leftSuffix = left.count
+            var rightSuffix = right.count
+            var suffix: [Match] = []
+            while leftSuffix > prefix,
+                  rightSuffix > prefix,
+                  left[leftSuffix - 1] == right[rightSuffix - 1]
+            {
+                leftSuffix -= 1
+                rightSuffix -= 1
+                suffix.append(Match(left: leftSuffix, right: rightSuffix))
+            }
+            return matches + suffix.reversed()
+        }
+
+        var lengths = Array(
+            repeating: Array(repeating: 0, count: right.count + 1),
+            count: left.count + 1
+        )
+        for leftIndex in 1...left.count {
+            for rightIndex in 1...right.count {
+                if left[leftIndex - 1] == right[rightIndex - 1] {
+                    lengths[leftIndex][rightIndex] = lengths[leftIndex - 1][rightIndex - 1] + 1
+                } else {
+                    lengths[leftIndex][rightIndex] = max(
+                        lengths[leftIndex - 1][rightIndex],
+                        lengths[leftIndex][rightIndex - 1]
+                    )
+                }
+            }
+        }
+
+        var matches: [Match] = []
+        var leftIndex = left.count
+        var rightIndex = right.count
+        while leftIndex > 0, rightIndex > 0 {
+            if left[leftIndex - 1] == right[rightIndex - 1] {
+                matches.append(Match(left: leftIndex - 1, right: rightIndex - 1))
+                leftIndex -= 1
+                rightIndex -= 1
+            } else if lengths[leftIndex - 1][rightIndex] >= lengths[leftIndex][rightIndex - 1] {
+                leftIndex -= 1
+            } else {
+                rightIndex -= 1
+            }
+        }
+        return matches.reversed()
+    }
+
+    private static func pairLines(
+        left: [String],
+        right: [String],
+        ignoreWhitespace: Bool
+    ) -> [ScoredMatch] {
+        guard !left.isEmpty, !right.isEmpty else { return [] }
+        guard left.count * right.count <= matrixCellLimit else {
+            return zip(left.indices, right.indices).map { leftIndex, rightIndex in
+                ScoredMatch(left: leftIndex, right: rightIndex)
+            }
+        }
+
+        let preferredPairs = similarPairs(
+            left.map { normalized($0, ignoreWhitespace: ignoreWhitespace) },
+            right.map { normalized($0, ignoreWhitespace: ignoreWhitespace) }
+        )
+        return fillUnpairedLines(
+            in: preferredPairs,
+            leftCount: left.count,
+            rightCount: right.count
+        )
+    }
+
+    private static func similarPairs(_ left: [String], _ right: [String]) -> [ScoredMatch] {
+        guard !left.isEmpty, !right.isEmpty else { return [] }
+        guard left.count * right.count <= matrixCellLimit else {
+            return zip(left.indices, right.indices).compactMap { leftIndex, rightIndex in
+                similarity(left[leftIndex], right[rightIndex]) >= pairingThreshold
+                    ? ScoredMatch(left: leftIndex, right: rightIndex)
+                    : nil
+            }
+        }
+
+        var cells = Array(
+            repeating: Array(repeating: PairCell(), count: right.count + 1),
+            count: left.count + 1
+        )
+        for leftIndex in 1...left.count {
+            for rightIndex in 1...right.count {
+                var best = cells[leftIndex - 1][rightIndex]
+                best.choice = .left
+                let skipRight = cells[leftIndex][rightIndex - 1]
+                if isBetter(skipRight, than: best) {
+                    best = skipRight
+                    best.choice = .right
+                }
+
+                let score = similarity(left[leftIndex - 1], right[rightIndex - 1])
+                if score >= pairingThreshold {
+                    var paired = cells[leftIndex - 1][rightIndex - 1]
+                    paired.score += score
+                    paired.count += 1
+                    paired.choice = .pair
+                    if isBetter(paired, than: best) {
+                        best = paired
+                    }
+                }
+                cells[leftIndex][rightIndex] = best
+            }
+        }
+
+        var pairs: [ScoredMatch] = []
+        var leftIndex = left.count
+        var rightIndex = right.count
+        while leftIndex > 0, rightIndex > 0 {
+            switch cells[leftIndex][rightIndex].choice {
+            case .pair:
+                pairs.append(ScoredMatch(
+                    left: leftIndex - 1,
+                    right: rightIndex - 1
+                ))
+                leftIndex -= 1
+                rightIndex -= 1
+            case .left:
+                leftIndex -= 1
+            case .right:
+                rightIndex -= 1
+            case .none:
+                leftIndex = 0
+                rightIndex = 0
+            }
+        }
+        return pairs.reversed()
+    }
+
+    private static func fillUnpairedLines(
+        in preferredPairs: [ScoredMatch],
+        leftCount: Int,
+        rightCount: Int
+    ) -> [ScoredMatch] {
+        var pairs: [ScoredMatch] = []
+        var nextLeft = 0
+        var nextRight = 0
+
+        for preferred in preferredPairs {
+            pairs += zip(nextLeft..<preferred.left, nextRight..<preferred.right).map {
+                ScoredMatch(left: $0.0, right: $0.1)
+            }
+            pairs.append(preferred)
+            nextLeft = preferred.left + 1
+            nextRight = preferred.right + 1
+        }
+
+        pairs += zip(nextLeft..<leftCount, nextRight..<rightCount).map {
+            ScoredMatch(left: $0.0, right: $0.1)
+        }
+        return pairs
+    }
+
+    private static func isBetter(_ candidate: PairCell, than current: PairCell) -> Bool {
+        candidate.score > current.score + 0.000_000_000_001
+            || (abs(candidate.score - current.score) <= 0.000_000_000_001
+                && candidate.count > current.count)
+    }
+
+    private static func similarity(_ left: String, _ right: String) -> Double {
+        if left == right { return 1 }
+        let leftCharacters = Array(left)
+        let rightCharacters = Array(right)
+        guard !leftCharacters.isEmpty, !rightCharacters.isEmpty else { return 0 }
+        guard leftCharacters.count * rightCharacters.count <= matrixCellLimit else {
+            let sharedPrefix = zip(leftCharacters, rightCharacters).prefix { $0 == $1 }.count
+            return (2 * Double(sharedPrefix)) / Double(leftCharacters.count + rightCharacters.count)
+        }
+        let matches = orderedMatches(
+            leftCharacters.map(String.init),
+            rightCharacters.map(String.init)
+        ).count
+        return (2 * Double(matches)) / Double(leftCharacters.count + rightCharacters.count)
+    }
+
+    private static func characterHighlights(
+        source: String,
+        other: String,
+        lineOffset: Int,
+        color: Int,
+        algorithm: DiffAlgorithm,
+        ignoreWhitespace: Bool
+    ) -> [TextHighlight] {
+        let ranges: [ClassifiedRange]
+        switch algorithm {
+        case .semantic:
+            ranges = semanticChangedRanges(
+                source: source,
+                other: other,
+                ignoreWhitespace: ignoreWhitespace
+            )
+        case .word:
+            ranges = tokenChangedRanges(
+                source: source,
+                other: other,
+                ignoreWhitespace: ignoreWhitespace
+            )
+        case .character:
+            ranges = changedCharacterRanges(source: source, other: other, offset: 0)
+                .map { ClassifiedRange(range: $0, category: .character) }
+        case .line:
+            ranges = [
+                ClassifiedRange(
+                    range: NSRange(location: 0, length: source.utf16.count),
+                    category: .phrase
+                ),
+            ]
+        }
+
+        return ranges.map {
+            TextHighlight(
+                range: NSRange(
+                    location: lineOffset + $0.range.location,
+                    length: $0.range.length
+                ),
+                kind: highlightKind(for: $0.category, color: color)
+            )
+        }
+    }
+
+    private static func semanticChangedRanges(
+        source: String,
+        other: String,
+        ignoreWhitespace: Bool
+    ) -> [ClassifiedRange] {
+        let sourceTokens = tokens(in: source, ignoreWhitespace: ignoreWhitespace)
+        let otherTokens = tokens(in: other, ignoreWhitespace: ignoreWhitespace)
+        let matches = orderedMatches(
+            sourceTokens.map(\.key),
+            otherTokens.map(\.key)
+        )
+
+        var ranges: [ClassifiedRange] = []
+        var sourceStart = 0
+        var otherStart = 0
+        for matchIndex in 0...matches.count {
+            let match = matchIndex < matches.count ? matches[matchIndex] : nil
+            let sourceEnd = match?.left ?? sourceTokens.count
+            let otherEnd = match?.right ?? otherTokens.count
+            ranges += changedTokenRanges(
+                source: sourceTokens,
+                other: otherTokens,
+                sourceRange: sourceStart..<sourceEnd,
+                otherRange: otherStart..<otherEnd
+            )
+
+            if let match {
+                sourceStart = match.left + 1
+                otherStart = match.right + 1
+            }
+        }
+        return mergeClassified(ranges)
+    }
+
+    private static func changedTokenRanges(
+        source: [DiffToken],
+        other: [DiffToken],
+        sourceRange: Range<Int>,
+        otherRange: Range<Int>
+    ) -> [ClassifiedRange] {
+        let sourceWords = sourceRange.filter { source[$0].kind == .word }
+        let otherWords = otherRange.filter { other[$0].kind == .word }
+        let wordPairs = similarPairs(
+            sourceWords.map { source[$0].text },
+            otherWords.map { other[$0].text }
+        )
+        var pairedSource = Set<Int>()
+        var ranges: [ClassifiedRange] = []
+
+        for pair in wordPairs {
+            let sourceIndex = sourceWords[pair.left]
+            let otherIndex = otherWords[pair.right]
+            pairedSource.insert(sourceIndex)
+            ranges += changedCharacterRanges(
+                source: source[sourceIndex].text,
+                other: other[otherIndex].text,
+                offset: source[sourceIndex].range.location
+            ).map { ClassifiedRange(range: $0, category: .character) }
+        }
+
+        for index in sourceRange where !pairedSource.contains(index) {
+            ranges.append(ClassifiedRange(
+                range: source[index].range,
+                category: source[index].kind == .word ? .word : .phrase
+            ))
+        }
+        return ranges
+    }
+
+    private static func tokenChangedRanges(
+        source: String,
+        other: String,
+        ignoreWhitespace: Bool
+    ) -> [ClassifiedRange] {
+        let sourceTokens = tokens(in: source, ignoreWhitespace: ignoreWhitespace)
+        let otherTokens = tokens(in: other, ignoreWhitespace: ignoreWhitespace)
+        let matches = orderedMatches(sourceTokens.map(\.key), otherTokens.map(\.key))
+        let matchedSource = Set(matches.map(\.left))
+        return sourceTokens.indices
+            .filter { !matchedSource.contains($0) }
+            .map {
+                ClassifiedRange(
+                    range: sourceTokens[$0].range,
+                    category: sourceTokens[$0].kind == .word ? .word : .phrase
+                )
+            }
+    }
+
+    private static func highlightKind(
+        for category: ChangeCategory,
+        color: Int
+    ) -> HighlightKind {
+        switch category {
+        case .character: .character(color)
+        case .word: .word(color)
+        case .phrase: .phrase(color)
+        case .addition: .addition
+        case .deletion: .deletion
+        }
+    }
+
+    private static func mergeClassified(_ ranges: [ClassifiedRange]) -> [ClassifiedRange] {
+        var merged: [ClassifiedRange] = []
+        for item in ranges.sorted(by: { $0.range.location < $1.range.location }) {
+            if let last = merged.last,
+               last.category == item.category,
+               NSMaxRange(last.range) == item.range.location
+            {
+                merged[merged.count - 1].range.length += item.range.length
+            } else {
+                merged.append(item)
+            }
+        }
+        return merged
+    }
+
+    private static func changedCharacterRanges(
+        source: String,
+        other: String,
+        offset: Int
+    ) -> [NSRange] {
+        let sourceUnits = characterUnits(source, ignoreWhitespace: false)
+        let otherUnits = characterUnits(other, ignoreWhitespace: false)
+        let matches = orderedMatches(sourceUnits.map(\.value), otherUnits.map(\.value))
+        let matchedSource = Set(matches.map(\.left))
+        return sourceUnits.indices
+            .filter { !matchedSource.contains($0) }
+            .map {
+                NSRange(
+                    location: offset + sourceUnits[$0].range.location,
+                    length: sourceUnits[$0].range.length
+                )
+            }
+    }
+
+    private static func tokens(in value: String, ignoreWhitespace: Bool) -> [DiffToken] {
+        var tokens: [DiffToken] = []
+        var utf16Offset = 0
+
+        for character in value {
+            let text = String(character)
+            let length = text.utf16.count
+            let kind = tokenKind(character)
+            defer { utf16Offset += length }
+            if ignoreWhitespace, kind == .whitespace {
+                continue
+            }
+
+            if let last = tokens.last, last.kind == kind {
+                tokens[tokens.count - 1].text += text
+                tokens[tokens.count - 1].range.length += length
+            } else {
+                tokens.append(DiffToken(
+                    kind: kind,
+                    text: text,
+                    range: NSRange(location: utf16Offset, length: length)
+                ))
+            }
+        }
+        return tokens
+    }
+
+    private static func tokenKind(_ character: Character) -> TokenKind {
+        if character.isWhitespace {
+            return .whitespace
+        }
+        if character.unicodeScalars.allSatisfy({
+            CharacterSet.punctuationCharacters.contains($0)
+                || CharacterSet.symbols.contains($0)
+        }) {
+            return .punctuation
+        }
+        return .word
+    }
+
+    private static func characterUnits(
+        _ value: String,
+        ignoreWhitespace: Bool
+    ) -> [(value: String, range: NSRange)] {
+        var units: [(String, NSRange)] = []
+        var utf16Offset = 0
+        for character in value {
+            let text = String(character)
+            let length = text.utf16.count
+            if !ignoreWhitespace || !character.isWhitespace {
+                units.append((text, NSRange(location: utf16Offset, length: length)))
+            }
+            utf16Offset += length
+        }
+        return units
+    }
+
+    private static func fullLineHighlight(
+        line: String,
+        offset: Int,
+        kind: HighlightKind
+    ) -> TextHighlight {
+        TextHighlight(
+            range: NSRange(location: offset, length: max(1, line.utf16.count)),
+            kind: kind
+        )
+    }
+
+    private static func merge(_ ranges: [NSRange]) -> [NSRange] {
+        var merged: [NSRange] = []
+        for range in ranges.sorted(by: {
+            $0.location < $1.location
+                || ($0.location == $1.location && $0.length < $1.length)
+        }) {
+            if let last = merged.last, NSMaxRange(last) == range.location {
+                merged[merged.count - 1].length += range.length
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
+    }
+}
+
+private struct TextLines {
+    let lines: [String]
+    let offsets: [Int]
+
+    init(_ text: String) {
+        lines = text.components(separatedBy: "\n")
+        var nextOffset = 0
+        var computedOffsets: [Int] = []
+        for line in lines {
+            computedOffsets.append(nextOffset)
+            nextOffset += line.utf16.count + 1
+        }
+        offsets = computedOffsets
+    }
+
+    func offset(at line: Int) -> Int {
+        guard line < offsets.count else {
+            return max(0, offsets.last.map { $0 + lines.last!.utf16.count } ?? 0)
+        }
+        return offsets[line]
+    }
+}
+
+private struct Match {
+    let left: Int
+    let right: Int
+}
+
+private struct ScoredMatch {
+    let left: Int
+    let right: Int
+}
+
+private enum TokenKind: String {
+    case word
+    case punctuation
+    case whitespace
+}
+
+private struct DiffToken {
+    let kind: TokenKind
+    var text: String
+    var range: NSRange
+
+    var key: String {
+        kind.rawValue + "\0" + text
+    }
+}
+
+private struct ClassifiedRange {
+    var range: NSRange
+    let category: ChangeCategory
+}
+
+private enum Choice {
+    case none
+    case left
+    case right
+    case pair
+}
+
+private struct PairCell {
+    var score = 0.0
+    var count = 0
+    var choice = Choice.none
+}

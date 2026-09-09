@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "inkling",
+  "project_id": "56bb1f2b-c967-42f4-a178-b911c9371601"
+}

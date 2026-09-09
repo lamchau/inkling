@@ -1,0 +1,28 @@
+import Foundation
+import Testing
+@testable import Inkling
+
+@Suite("App settings")
+@MainActor
+struct AppSettingsTests {
+    @Test("editor and navigation preferences persist")
+    func persistence() {
+        let suite = "InklingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let settings = AppSettings(defaults: defaults)
+        settings.algorithm = .character
+        settings.showLineNumbers = false
+        settings.syncScrolling = false
+        settings.syncCaret = true
+        settings.shortcuts = .optionJK
+
+        let restored = AppSettings(defaults: defaults)
+        #expect(restored.algorithm == .character)
+        #expect(restored.showLineNumbers == false)
+        #expect(restored.syncScrolling == false)
+        #expect(restored.syncCaret == true)
+        #expect(restored.shortcuts == .optionJK)
+    }
+}
