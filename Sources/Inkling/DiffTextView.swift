@@ -179,12 +179,8 @@ struct DiffTextView: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         configureDropTarget(containerView, context: context)
         if textView.string != text {
-            let selectedRanges = textView.selectedRanges
             context.coordinator.isApplyingUpdate = true
-            Self.replaceTextWithoutUndo(text, in: textView)
-            textView.selectedRanges = selectedRanges.filter {
-                NSMaxRange($0.rangeValue) <= text.utf16.count
-            }
+            Self.replaceTextPreservingSelection(text, in: textView)
             context.coordinator.isApplyingUpdate = false
             context.coordinator.gutterView?.refresh()
         }
@@ -331,6 +327,22 @@ struct DiffTextView: NSViewRepresentable {
             ], forCharacterRange: currentRange)
         }
         textView.needsDisplay = true
+    }
+
+    static func replaceTextPreservingSelection(_ text: String, in textView: NSTextView) {
+        let selectedRanges = textView.selectedRanges
+        replaceTextWithoutUndo(text, in: textView)
+        let textLength = text.utf16.count
+        let restoredRanges = selectedRanges.compactMap { value -> NSValue? in
+            let range = value.rangeValue
+            guard range.location != NSNotFound else { return nil }
+            let location = min(range.location, textLength)
+            let length = min(range.length, textLength - location)
+            return NSValue(range: NSRange(location: location, length: length))
+        }
+        textView.selectedRanges = restoredRanges.isEmpty
+            ? [NSValue(range: NSRange(location: textLength, length: 0))]
+            : restoredRanges
     }
 
     static func replaceTextWithoutUndo(_ text: String, in textView: NSTextView) {

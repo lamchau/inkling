@@ -222,6 +222,19 @@ struct DiffTextViewTests {
         #expect(textView.selectedRange() == NSRange(location: 0, length: 5))
     }
 
+    @Test("replacing text clamps selections to the new document")
+    func replacementClampsSelection() {
+        let textView = NSTextView()
+        textView.string = String(repeating: "long text ", count: 100)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+
+        DiffTextView.replaceTextPreservingSelection("short", in: textView)
+
+        #expect(textView.string == "short")
+        #expect(textView.selectedRanges.count == 1)
+        #expect(textView.selectedRange() == NSRange(location: 5, length: 0))
+    }
+
     @Test("AppKit editor keeps text at the leading edge with line numbers")
     func editorGeometry() {
         let scrollView = NSTextView.scrollableTextView()
