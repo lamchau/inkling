@@ -17,6 +17,12 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Picker("Highlight colors", selection: $settings.highlightStyle) {
+                    ForEach(HighlightStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+
                 Picker("Change navigation", selection: $settings.shortcuts) {
                     ForEach(ShortcutPreset.allCases) { shortcut in
                         Text(shortcut.title).tag(shortcut)

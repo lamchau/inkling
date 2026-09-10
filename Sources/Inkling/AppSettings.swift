@@ -21,10 +21,24 @@ enum DiffAlgorithm: String, CaseIterable, Identifiable, Sendable {
 
     var detail: String {
         switch self {
-        case .semantic: "Words and phrases, refined to characters when similar"
+        case .semantic: "Stable word anchors, phrase blocks, and exact character edits"
         case .word: "Whole changed words and punctuation"
         case .character: "Smallest character-level differences"
         case .line: "Complete changed lines"
+        }
+    }
+}
+
+enum HighlightStyle: String, CaseIterable, Identifiable {
+    case foreground
+    case background
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .foreground: "Foreground"
+        case .background: "Background"
         }
     }
 }
@@ -81,6 +95,7 @@ final class AppSettings {
         static let syncScrolling = "syncScrolling"
         static let syncCaret = "syncCaret"
         static let shortcuts = "navigationShortcuts"
+        static let highlightStyle = "highlightStyle"
     }
 
     var algorithm: DiffAlgorithm {
@@ -98,6 +113,9 @@ final class AppSettings {
     var shortcuts: ShortcutPreset {
         didSet { defaults.set(shortcuts.rawValue, forKey: Key.shortcuts) }
     }
+    var highlightStyle: HighlightStyle {
+        didSet { defaults.set(highlightStyle.rawValue, forKey: Key.highlightStyle) }
+    }
 
     private let defaults: UserDefaults
 
@@ -112,5 +130,8 @@ final class AppSettings {
         shortcuts = ShortcutPreset(
             rawValue: defaults.string(forKey: Key.shortcuts) ?? ""
         ) ?? .commandOptionArrows
+        highlightStyle = HighlightStyle(
+            rawValue: defaults.string(forKey: Key.highlightStyle) ?? ""
+        ) ?? .foreground
     }
 }

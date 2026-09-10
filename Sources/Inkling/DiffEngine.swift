@@ -357,10 +357,7 @@ enum DiffEngine {
     ) -> [ClassifiedRange] {
         let sourceTokens = tokens(in: source, ignoreWhitespace: ignoreWhitespace)
         let otherTokens = tokens(in: other, ignoreWhitespace: ignoreWhitespace)
-        let matches = orderedMatches(
-            sourceTokens.map(\.key),
-            otherTokens.map(\.key)
-        )
+        let matches = wordMatches(sourceTokens, otherTokens)
 
         var ranges: [ClassifiedRange] = []
         var sourceStart = 0
@@ -403,6 +400,10 @@ enum DiffEngine {
             let sourceIndex = sourceWords[pair.left]
             let otherIndex = otherWords[pair.right]
             pairedSource.insert(sourceIndex)
+            ranges.append(ClassifiedRange(
+                range: source[sourceIndex].range,
+                category: .word
+            ))
             ranges += changedCharacterRanges(
                 source: source[sourceIndex].text,
                 other: other[otherIndex].text,
@@ -410,10 +411,28 @@ enum DiffEngine {
             ).map { ClassifiedRange(range: $0, category: .character) }
         }
 
+        let sourceNonWords = sourceRange.filter { source[$0].kind != .word }
+        let otherNonWords = otherRange.filter { other[$0].kind != .word }
+        for match in orderedMatches(
+            sourceNonWords.map { source[$0].key },
+            otherNonWords.map { other[$0].key }
+        ) {
+            pairedSource.insert(sourceNonWords[match.left])
+        }
+
+        let unpairedWordCount = sourceWords.count {
+            !pairedSource.contains($0)
+        }
         for index in sourceRange where !pairedSource.contains(index) {
+            let category: ChangeCategory
+            if source[index].kind == .word {
+                category = unpairedWordCount > 1 ? .phrase : .word
+            } else {
+                category = .phrase
+            }
             ranges.append(ClassifiedRange(
                 range: source[index].range,
-                category: source[index].kind == .word ? .word : .phrase
+                category: category
             ))
         }
         return ranges
@@ -426,14 +445,49 @@ enum DiffEngine {
     ) -> [ClassifiedRange] {
         let sourceTokens = tokens(in: source, ignoreWhitespace: ignoreWhitespace)
         let otherTokens = tokens(in: other, ignoreWhitespace: ignoreWhitespace)
-        let matches = orderedMatches(sourceTokens.map(\.key), otherTokens.map(\.key))
-        let matchedSource = Set(matches.map(\.left))
-        return sourceTokens.indices
+        let matches = wordMatches(sourceTokens, otherTokens)
+
+        var ranges: [ClassifiedRange] = []
+        var sourceStart = 0
+        var otherStart = 0
+        for matchIndex in 0...matches.count {
+            let match = matchIndex < matches.count ? matches[matchIndex] : nil
+            let sourceEnd = match?.left ?? sourceTokens.count
+            let otherEnd = match?.right ?? otherTokens.count
+            ranges += unmatchedTokenRanges(
+                source: sourceTokens,
+                other: otherTokens,
+                sourceRange: sourceStart..<sourceEnd,
+                otherRange: otherStart..<otherEnd
+            )
+
+            if let match {
+                sourceStart = match.left + 1
+                otherStart = match.right + 1
+            }
+        }
+        return mergeClassified(ranges)
+    }
+
+    private static func unmatchedTokenRanges(
+        source: [DiffToken],
+        other: [DiffToken],
+        sourceRange: Range<Int>,
+        otherRange: Range<Int>
+    ) -> [ClassifiedRange] {
+        let sourceNonWords = sourceRange.filter { source[$0].kind != .word }
+        let otherNonWords = otherRange.filter { other[$0].kind != .word }
+        let matchedSource = Set(orderedMatches(
+            sourceNonWords.map { source[$0].key },
+            otherNonWords.map { other[$0].key }
+        ).map { sourceNonWords[$0.left] })
+
+        return sourceRange
             .filter { !matchedSource.contains($0) }
             .map {
                 ClassifiedRange(
-                    range: sourceTokens[$0].range,
-                    category: sourceTokens[$0].kind == .word ? .word : .phrase
+                    range: source[$0].range,
+                    category: source[$0].kind == .word ? .word : .phrase
                 )
             }
     }
@@ -448,6 +502,23 @@ enum DiffEngine {
         case .phrase: .phrase(color)
         case .addition: .addition
         case .deletion: .deletion
+        }
+    }
+
+    private static func wordMatches(
+        _ source: [DiffToken],
+        _ other: [DiffToken]
+    ) -> [Match] {
+        let sourceAnchors = source.indices.filter { source[$0].kind == .word }
+        let otherAnchors = other.indices.filter { other[$0].kind == .word }
+        return orderedMatches(
+            sourceAnchors.map { source[$0].key },
+            otherAnchors.map { other[$0].key }
+        ).map {
+            Match(
+                left: sourceAnchors[$0.left],
+                right: otherAnchors[$0.right]
+            )
         }
     }
 

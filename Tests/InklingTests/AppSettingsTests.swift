@@ -17,6 +17,7 @@ struct AppSettingsTests {
         settings.syncScrolling = false
         settings.syncCaret = true
         settings.shortcuts = .optionJK
+        settings.highlightStyle = .background
 
         let restored = AppSettings(defaults: defaults)
         #expect(restored.algorithm == .character)
@@ -24,5 +25,6 @@ struct AppSettingsTests {
         #expect(restored.syncScrolling == false)
         #expect(restored.syncCaret == true)
         #expect(restored.shortcuts == .optionJK)
+        #expect(restored.highlightStyle == .background)
     }
 }

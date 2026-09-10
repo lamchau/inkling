@@ -1,5 +1,14 @@
 import SwiftUI
 
+enum EditorLayout {
+    static let railWidth: CGFloat = 52
+    static let dividerWidth: CGFloat = 1
+
+    static func paneWidth(totalWidth: CGFloat) -> CGFloat {
+        max(0, (totalWidth - railWidth - dividerWidth * 2) / 2)
+    }
+}
+
 struct ContentView: View {
     @Environment(DiffSession.self) private var session
     @Environment(AppSettings.self) private var settings
@@ -58,11 +67,21 @@ struct ContentView: View {
     }
 
     private var editors: some View {
-        HSplitView {
-            editor(for: .left)
-            centerRail
-                .frame(minWidth: 52, idealWidth: 52, maxWidth: 52)
-            editor(for: .right)
+        GeometryReader { proxy in
+            let paneWidth = EditorLayout.paneWidth(totalWidth: proxy.size.width)
+
+            HSplitView {
+                editor(for: .left)
+                    .frame(minWidth: paneWidth, idealWidth: paneWidth, maxWidth: paneWidth)
+                centerRail
+                    .frame(
+                        minWidth: EditorLayout.railWidth,
+                        idealWidth: EditorLayout.railWidth,
+                        maxWidth: EditorLayout.railWidth
+                    )
+                editor(for: .right)
+                    .frame(minWidth: paneWidth, idealWidth: paneWidth, maxWidth: paneWidth)
+            }
         }
     }
 
@@ -100,7 +119,11 @@ struct ContentView: View {
         .popover(isPresented: $showsPalette, arrowEdge: .bottom) {
             ChangePaletteView(
                 result: session.result,
-                currentHunk: session.currentHunkIndex
+                currentHunk: session.currentHunkIndex,
+                highlightStyle: Binding(
+                    get: { settings.highlightStyle },
+                    set: { settings.highlightStyle = $0 }
+                )
             )
         }
     }
@@ -227,6 +250,7 @@ struct ContentView: View {
             navigationRevision: session.navigationRevision,
             side: side,
             showLineNumbers: settings.showLineNumbers,
+            highlightStyle: settings.highlightStyle,
             syncScrolling: settings.syncScrolling,
             syncCaret: settings.syncCaret,
             sharedScrollOrigin: $sharedScrollOrigin,
@@ -272,6 +296,7 @@ struct ContentView: View {
     private struct ChangePaletteView: View {
         let result: DiffResult
         let currentHunk: Int?
+        @Binding var highlightStyle: HighlightStyle
 
         var body: some View {
             VStack(alignment: .leading, spacing: 12) {
@@ -283,6 +308,14 @@ struct ContentView: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
+
+                Picker("Highlight colors", selection: $highlightStyle) {
+                    ForEach(HighlightStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
 
                 ForEach(ChangeCategory.allCases) { category in
                     HStack {

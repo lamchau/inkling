@@ -44,6 +44,7 @@ struct DiffTextView: NSViewRepresentable {
     let navigationRevision: Int
     let side: DiffSide
     let showLineNumbers: Bool
+    let highlightStyle: HighlightStyle
     let syncScrolling: Bool
     let syncCaret: Bool
     @Binding var sharedScrollOrigin: CGPoint
@@ -95,7 +96,7 @@ struct DiffTextView: NSViewRepresentable {
         context.coordinator.gutterView = gutterView
         context.coordinator.observeScroll()
         updateLineNumbers(containerView)
-        Self.applyHighlights(highlights, to: textView)
+        Self.applyHighlights(highlights, style: highlightStyle, to: textView)
         return containerView
     }
 
@@ -118,7 +119,7 @@ struct DiffTextView: NSViewRepresentable {
             x: 0,
             y: scrollView.contentView.bounds.origin.y
         ))
-        Self.applyHighlights(highlights, to: textView)
+        Self.applyHighlights(highlights, style: highlightStyle, to: textView)
 
         if context.coordinator.lastNavigationRevision != navigationRevision {
             context.coordinator.lastNavigationRevision = navigationRevision
@@ -163,7 +164,11 @@ struct DiffTextView: NSViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    static func applyHighlights(_ highlights: [TextHighlight], to textView: NSTextView) {
+    static func applyHighlights(
+        _ highlights: [TextHighlight],
+        style: HighlightStyle = .foreground,
+        to textView: NSTextView
+    ) {
         guard let storage = textView.textStorage, let layoutManager = textView.layoutManager else {
             return
         }
@@ -188,16 +193,53 @@ struct DiffTextView: NSViewRepresentable {
         ]
 
         layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
-        for highlight in highlights {
+        layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: fullRange)
+        layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: fullRange)
+        layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: fullRange)
+        for highlight in highlights.sorted(by: {
+            highlightPriority($0.kind) < highlightPriority($1.kind)
+        }) {
             let range = NSIntersectionRange(highlight.range, fullRange)
             guard range.length > 0 else { continue }
-            layoutManager.addTemporaryAttribute(
-                .foregroundColor,
-                value: color(for: highlight.kind),
-                forCharacterRange: range
-            )
+            let color = color(for: highlight.kind)
+            switch style {
+            case .foreground:
+                layoutManager.addTemporaryAttribute(
+                    .foregroundColor,
+                    value: color,
+                    forCharacterRange: range
+                )
+                if highlight.kind.category == .character {
+                    layoutManager.addTemporaryAttributes([
+                        .underlineStyle: NSUnderlineStyle.thick.rawValue,
+                        .underlineColor: color,
+                    ], forCharacterRange: range)
+                }
+            case .background:
+                let isCharacter = highlight.kind.category == .character
+                layoutManager.addTemporaryAttribute(
+                    .backgroundColor,
+                    value: color.withAlphaComponent(isCharacter ? 0.9 : 0.4),
+                    forCharacterRange: range
+                )
+                if isCharacter {
+                    layoutManager.addTemporaryAttribute(
+                        .foregroundColor,
+                        value: NSColor.white,
+                        forCharacterRange: range
+                    )
+                }
+            }
         }
         textView.needsDisplay = true
+    }
+
+    private static func highlightPriority(_ kind: HighlightKind) -> Int {
+        switch kind.category {
+        case .phrase, .addition, .deletion: 0
+        case .word: 1
+        case .character: 2
+        }
     }
 
     private static func color(for kind: HighlightKind) -> NSColor {

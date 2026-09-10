@@ -41,10 +41,66 @@ struct DiffEngineTests {
             ignoreWhitespace: false
         )
 
-        #expect(result.leftHighlights.isEmpty)
-        #expect(result.rightHighlights.map(\.range) == [
-            NSRange(location: 4, length: 1),
+        #expect(result.leftHighlights.contains {
+            $0.range == NSRange(location: 0, length: 5)
+                && $0.kind.category == .word
+        })
+        #expect(result.rightHighlights.contains {
+            $0.range == NSRange(location: 0, length: 6)
+                && $0.kind.category == .word
+        })
+        #expect(result.rightHighlights.contains {
+            $0.range == NSRange(location: 4, length: 1)
+                && $0.kind.category == .character
+        })
+    }
+
+    @Test("semantic diff pairs a word with a one-character suffix")
+    func semanticWordSuffix() {
+        let result = DiffEngine.compare(
+            left: "sed do eiusmod tempor incididunt",
+            right: "sed do eiusmod tempora incididunt",
+            ignoreWhitespace: false
+        )
+
+        #expect(result.leftHighlights == [
+            TextHighlight(range: NSRange(location: 15, length: 6), kind: .word(0)),
         ])
+        #expect(result.rightHighlights.contains {
+            $0.range == NSRange(location: 15, length: 7)
+                && $0.kind.category == .word
+        })
+        #expect(result.rightHighlights.contains {
+            $0.range == NSRange(location: 21, length: 1)
+                && $0.kind.category == .character
+        })
+    }
+
+    @Test("semantic anchors remain local in long prose")
+    func semanticLongProse() {
+        let prefix = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
+        let left = prefix
+            + "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam."
+        let right = prefix
+            + "tempora incididunt ut labore et dolore magna aliqua, quod saepe numero occurrit. "
+            + "Ut enim ad minim veniam."
+        let result = DiffEngine.compare(
+            left: left,
+            right: right,
+            ignoreWhitespace: false
+        )
+        let temporRange = NSRange(location: prefix.utf16.count, length: 6)
+
+        #expect(result.leftHighlights.contains {
+            $0.range == temporRange && $0.kind.category == .word
+        })
+        #expect(!result.leftHighlights.contains {
+            $0.range.location < temporRange.location
+        })
+        #expect(result.rightHighlights.contains {
+            $0.range == NSRange(location: NSMaxRange(temporRange), length: 1)
+                && $0.kind.category == .character
+        })
     }
 
     @Test("inserted line is semantic addition")
