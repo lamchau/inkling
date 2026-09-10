@@ -544,7 +544,7 @@ enum DiffEngine {
         pairingThreshold: Double
     ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
+        guard fitsMatrix(left.count, right.count) else {
             return zip(left.indices, right.indices).map { leftIndex, rightIndex in
                 ScoredMatch(left: leftIndex, right: rightIndex)
             }
@@ -568,7 +568,7 @@ enum DiffEngine {
         threshold: Double
     ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
+        guard fitsMatrix(left.count, right.count) else {
             return zip(left.indices, right.indices).compactMap { leftIndex, rightIndex in
                 similarity(left[leftIndex], right[rightIndex]) >= threshold
                     ? ScoredMatch(left: leftIndex, right: rightIndex)
@@ -663,9 +663,7 @@ enum DiffEngine {
         let leftCharacters = Array(left)
         let rightCharacters = Array(right)
         guard !leftCharacters.isEmpty, !rightCharacters.isEmpty else { return 0 }
-        guard boundedCellCount(leftCharacters.count, rightCharacters.count)
-            .map({ $0 <= matrixCellLimit }) == true
-        else {
+        guard fitsMatrix(leftCharacters.count, rightCharacters.count) else {
             let sharedPrefix = zip(leftCharacters, rightCharacters).prefix { $0 == $1 }.count
             return (2 * Double(sharedPrefix)) / Double(leftCharacters.count + rightCharacters.count)
         }
@@ -1018,7 +1016,7 @@ enum DiffEngine {
         _ right: [String]
     ) -> [Match] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
+        guard fitsMatrix(left.count, right.count) else {
             return orderedMatches(left, right)
         }
 
@@ -1093,6 +1091,10 @@ enum DiffEngine {
     private static func mismatchCost(from cell: EditCell, baseCost: Int) -> Int {
         let opensGap = cell.operation == .match || cell.operation == .none
         return cell.cost + baseCost + (opensGap ? gapOpeningCost : 0)
+    }
+
+    private static func fitsMatrix(_ leftCount: Int, _ rightCount: Int) -> Bool {
+        boundedCellCount(leftCount, rightCount).map { $0 <= matrixCellLimit } == true
     }
 }
 
