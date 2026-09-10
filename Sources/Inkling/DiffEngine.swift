@@ -2,6 +2,7 @@ import Foundation
 
 enum DiffEngine {
     private static let matrixCellLimit = 250_000
+    private static let alignmentCellBudget = 2_000_000
     private static let pairingThreshold = 0.5
     private static let editCost = 2
     private static let gapOpeningCost = 1
@@ -206,36 +207,136 @@ enum DiffEngine {
     }
 
     private static func orderedMatches(_ left: [String], _ right: [String]) -> [Match] {
-        guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard left.count * right.count <= matrixCellLimit else {
-            var matches: [Match] = []
-            var prefix = 0
-            while prefix < min(left.count, right.count), left[prefix] == right[prefix] {
-                matches.append(Match(left: prefix, right: prefix))
-                prefix += 1
-            }
+        var budget = alignmentCellBudget
+        return boundedMatches(
+            left,
+            right,
+            leftRange: left.indices,
+            rightRange: right.indices,
+            budget: &budget
+        )
+    }
 
-            var leftSuffix = left.count
-            var rightSuffix = right.count
-            var suffix: [Match] = []
-            while leftSuffix > prefix,
-                  rightSuffix > prefix,
-                  left[leftSuffix - 1] == right[rightSuffix - 1]
-            {
-                leftSuffix -= 1
-                rightSuffix -= 1
-                suffix.append(Match(left: leftSuffix, right: rightSuffix))
+    private static func boundedMatches(
+        _ left: [String],
+        _ right: [String],
+        leftRange: Range<Int>,
+        rightRange: Range<Int>,
+        budget: inout Int
+    ) -> [Match] {
+        guard !leftRange.isEmpty, !rightRange.isEmpty else { return [] }
+
+        var leftStart = leftRange.lowerBound
+        var rightStart = rightRange.lowerBound
+        var prefix: [Match] = []
+        while leftStart < leftRange.upperBound,
+              rightStart < rightRange.upperBound,
+              left[leftStart] == right[rightStart]
+        {
+            prefix.append(Match(left: leftStart, right: rightStart))
+            leftStart += 1
+            rightStart += 1
+        }
+
+        var leftEnd = leftRange.upperBound
+        var rightEnd = rightRange.upperBound
+        var suffix: [Match] = []
+        while leftEnd > leftStart,
+              rightEnd > rightStart,
+              left[leftEnd - 1] == right[rightEnd - 1]
+        {
+            leftEnd -= 1
+            rightEnd -= 1
+            suffix.append(Match(left: leftEnd, right: rightEnd))
+        }
+
+        let coreLeft = leftStart..<leftEnd
+        let coreRight = rightStart..<rightEnd
+        guard !coreLeft.isEmpty, !coreRight.isEmpty else {
+            return prefix + suffix.reversed()
+        }
+
+        let cellCount = boundedCellCount(coreLeft.count, coreRight.count)
+        if let cellCount,
+           cellCount <= matrixCellLimit,
+           cellCount <= budget
+        {
+            budget -= cellCount
+            return prefix
+                + matrixMatches(
+                    left,
+                    right,
+                    leftRange: coreLeft,
+                    rightRange: coreRight
+                )
+                + suffix.reversed()
+        }
+
+        let anchors = patienceAnchors(
+            left,
+            right,
+            leftRange: coreLeft,
+            rightRange: coreRight
+        )
+        if !anchors.isEmpty {
+            var matches = prefix
+            var nextLeft = coreLeft.lowerBound
+            var nextRight = coreRight.lowerBound
+            for anchor in anchors {
+                matches += boundedMatches(
+                    left,
+                    right,
+                    leftRange: nextLeft..<anchor.left,
+                    rightRange: nextRight..<anchor.right,
+                    budget: &budget
+                )
+                matches.append(anchor)
+                nextLeft = anchor.left + 1
+                nextRight = anchor.right + 1
             }
+            matches += boundedMatches(
+                left,
+                right,
+                leftRange: nextLeft..<coreLeft.upperBound,
+                rightRange: nextRight..<coreRight.upperBound,
+                budget: &budget
+            )
             return matches + suffix.reversed()
         }
 
+        if let cellCount, cellCount <= budget {
+            budget -= cellCount
+            return prefix
+                + linearSpaceMatches(
+                    left,
+                    right,
+                    leftRange: coreLeft,
+                    rightRange: coreRight
+                )
+                + suffix.reversed()
+        }
+
+        return prefix + suffix.reversed()
+    }
+
+    private static func matrixMatches(
+        _ left: [String],
+        _ right: [String],
+        leftRange: Range<Int>,
+        rightRange: Range<Int>
+    ) -> [Match] {
+        let leftCount = leftRange.count
+        let rightCount = rightRange.count
+
         var lengths = Array(
-            repeating: Array(repeating: 0, count: right.count + 1),
-            count: left.count + 1
+            repeating: Array(repeating: 0, count: rightCount + 1),
+            count: leftCount + 1
         )
-        for leftIndex in 1...left.count {
-            for rightIndex in 1...right.count {
-                if left[leftIndex - 1] == right[rightIndex - 1] {
+        for leftIndex in 1...leftCount {
+            for rightIndex in 1...rightCount {
+                if left[leftRange.lowerBound + leftIndex - 1]
+                    == right[rightRange.lowerBound + rightIndex - 1]
+                {
                     lengths[leftIndex][rightIndex] = lengths[leftIndex - 1][rightIndex - 1] + 1
                 } else {
                     lengths[leftIndex][rightIndex] = max(
@@ -247,11 +348,16 @@ enum DiffEngine {
         }
 
         var matches: [Match] = []
-        var leftIndex = left.count
-        var rightIndex = right.count
+        var leftIndex = leftCount
+        var rightIndex = rightCount
         while leftIndex > 0, rightIndex > 0 {
-            if left[leftIndex - 1] == right[rightIndex - 1] {
-                matches.append(Match(left: leftIndex - 1, right: rightIndex - 1))
+            if left[leftRange.lowerBound + leftIndex - 1]
+                == right[rightRange.lowerBound + rightIndex - 1]
+            {
+                matches.append(Match(
+                    left: leftRange.lowerBound + leftIndex - 1,
+                    right: rightRange.lowerBound + rightIndex - 1
+                ))
                 leftIndex -= 1
                 rightIndex -= 1
             } else if lengths[leftIndex - 1][rightIndex] >= lengths[leftIndex][rightIndex - 1] {
@@ -263,13 +369,165 @@ enum DiffEngine {
         return matches.reversed()
     }
 
+    private static func linearSpaceMatches(
+        _ left: [String],
+        _ right: [String],
+        leftRange: Range<Int>,
+        rightRange: Range<Int>
+    ) -> [Match] {
+        guard !leftRange.isEmpty, !rightRange.isEmpty else { return [] }
+        if leftRange.count == 1 {
+            guard let rightIndex = rightRange.first(where: {
+                right[$0] == left[leftRange.lowerBound]
+            }) else {
+                return []
+            }
+            return [Match(left: leftRange.lowerBound, right: rightIndex)]
+        }
+
+        let leftMiddle = leftRange.lowerBound + leftRange.count / 2
+        let forward = lcsLengths(
+            left,
+            right,
+            leftRange: leftRange.lowerBound..<leftMiddle,
+            rightRange: rightRange,
+            reversed: false
+        )
+        let backward = lcsLengths(
+            left,
+            right,
+            leftRange: leftMiddle..<leftRange.upperBound,
+            rightRange: rightRange,
+            reversed: true
+        )
+        var rightSplitOffset = 0
+        var bestLength = -1
+        for offset in 0...rightRange.count {
+            let length = forward[offset] + backward[rightRange.count - offset]
+            if length > bestLength {
+                bestLength = length
+                rightSplitOffset = offset
+            }
+        }
+        let rightMiddle = rightRange.lowerBound + rightSplitOffset
+        return linearSpaceMatches(
+            left,
+            right,
+            leftRange: leftRange.lowerBound..<leftMiddle,
+            rightRange: rightRange.lowerBound..<rightMiddle
+        ) + linearSpaceMatches(
+            left,
+            right,
+            leftRange: leftMiddle..<leftRange.upperBound,
+            rightRange: rightMiddle..<rightRange.upperBound
+        )
+    }
+
+    private static func lcsLengths(
+        _ left: [String],
+        _ right: [String],
+        leftRange: Range<Int>,
+        rightRange: Range<Int>,
+        reversed: Bool
+    ) -> [Int] {
+        var previous = Array(repeating: 0, count: rightRange.count + 1)
+        var current = previous
+        for leftOffset in 0..<leftRange.count {
+            current[0] = 0
+            let leftIndex = reversed
+                ? leftRange.upperBound - leftOffset - 1
+                : leftRange.lowerBound + leftOffset
+            for rightOffset in 1...rightRange.count {
+                let rightIndex = reversed
+                    ? rightRange.upperBound - rightOffset
+                    : rightRange.lowerBound + rightOffset - 1
+                if left[leftIndex] == right[rightIndex] {
+                    current[rightOffset] = previous[rightOffset - 1] + 1
+                } else {
+                    current[rightOffset] = max(
+                        previous[rightOffset],
+                        current[rightOffset - 1]
+                    )
+                }
+            }
+            swap(&previous, &current)
+        }
+        return previous
+    }
+
+    private static func patienceAnchors(
+        _ left: [String],
+        _ right: [String],
+        leftRange: Range<Int>,
+        rightRange: Range<Int>
+    ) -> [Match] {
+        var leftOccurrences: [String: [Int]] = [:]
+        var rightOccurrences: [String: [Int]] = [:]
+        for index in leftRange {
+            leftOccurrences[left[index], default: []].append(index)
+        }
+        for index in rightRange {
+            rightOccurrences[right[index], default: []].append(index)
+        }
+        let candidates = leftOccurrences.compactMap { value, leftIndices -> Match? in
+            guard leftIndices.count == 1,
+                  let rightIndices = rightOccurrences[value],
+                  rightIndices.count == 1
+            else {
+                return nil
+            }
+            return Match(left: leftIndices[0], right: rightIndices[0])
+        }
+        .sorted { $0.left < $1.left }
+        guard !candidates.isEmpty else { return [] }
+
+        var tailRightIndices: [Int] = []
+        var tailCandidateIndices: [Int] = []
+        var predecessors = Array(repeating: -1, count: candidates.count)
+        for (candidateIndex, candidate) in candidates.enumerated() {
+            var lower = 0
+            var upper = tailRightIndices.count
+            while lower < upper {
+                let middle = (lower + upper) / 2
+                if tailRightIndices[middle] < candidate.right {
+                    lower = middle + 1
+                } else {
+                    upper = middle
+                }
+            }
+            if lower > 0 {
+                predecessors[candidateIndex] = tailCandidateIndices[lower - 1]
+            }
+            if lower == tailRightIndices.count {
+                tailRightIndices.append(candidate.right)
+                tailCandidateIndices.append(candidateIndex)
+            } else {
+                tailRightIndices[lower] = candidate.right
+                tailCandidateIndices[lower] = candidateIndex
+            }
+        }
+
+        var anchors: [Match] = []
+        var candidateIndex = tailCandidateIndices.last ?? -1
+        while candidateIndex >= 0 {
+            anchors.append(candidates[candidateIndex])
+            candidateIndex = predecessors[candidateIndex]
+        }
+        return anchors.reversed()
+    }
+
+    private static func boundedCellCount(_ leftCount: Int, _ rightCount: Int) -> Int? {
+        guard leftCount > 0, rightCount <= Int.max / leftCount else { return nil }
+        return leftCount * rightCount
+    }
+
     private static func pairLines(
         left: [String],
         right: [String],
         ignoreWhitespace: Bool
     ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard left.count * right.count <= matrixCellLimit else {
+        guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
             return zip(left.indices, right.indices).map { leftIndex, rightIndex in
                 ScoredMatch(left: leftIndex, right: rightIndex)
             }
@@ -288,7 +546,7 @@ enum DiffEngine {
 
     private static func similarPairs(_ left: [String], _ right: [String]) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard left.count * right.count <= matrixCellLimit else {
+        guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
             return zip(left.indices, right.indices).compactMap { leftIndex, rightIndex in
                 similarity(left[leftIndex], right[rightIndex]) >= pairingThreshold
                     ? ScoredMatch(left: leftIndex, right: rightIndex)
@@ -383,7 +641,9 @@ enum DiffEngine {
         let leftCharacters = Array(left)
         let rightCharacters = Array(right)
         guard !leftCharacters.isEmpty, !rightCharacters.isEmpty else { return 0 }
-        guard leftCharacters.count * rightCharacters.count <= matrixCellLimit else {
+        guard boundedCellCount(leftCharacters.count, rightCharacters.count)
+            .map({ $0 <= matrixCellLimit }) == true
+        else {
             let sharedPrefix = zip(leftCharacters, rightCharacters).prefix { $0 == $1 }.count
             return (2 * Double(sharedPrefix)) / Double(leftCharacters.count + rightCharacters.count)
         }
@@ -735,7 +995,7 @@ enum DiffEngine {
         _ right: [String]
     ) -> [Match] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard left.count * right.count <= matrixCellLimit else {
+        guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
             return orderedMatches(left, right)
         }
 

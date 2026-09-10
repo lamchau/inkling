@@ -260,4 +260,35 @@ struct DiffEngineTests {
             NSRange(location: 1, length: 1),
         ])
     }
+
+    @Test("large comparisons retain unique interior anchors")
+    func largePatienceAnchors() {
+        let shared = (0..<600).map { "line \($0)" }
+        let result = DiffEngine.compare(
+            left: shared.joined(separator: "\n"),
+            right: (["inserted first"] + shared + ["inserted last"])
+                .joined(separator: "\n"),
+            ignoreWhitespace: false
+        )
+
+        #expect(result.hunks.count == 2)
+        #expect(result.leftHighlights.isEmpty)
+        #expect(result.rightHighlights.count == 2)
+        #expect(result.rightHighlights.allSatisfy { $0.kind.category == .addition })
+    }
+
+    @Test("large repeated inputs use linear-space alignment")
+    func largeLinearSpaceAlignment() {
+        let left = (0..<600).map { $0.isMultiple(of: 2) ? "alpha" : "beta" }
+        let right = Array(left.dropFirst()) + [left[0]]
+        let result = DiffEngine.compare(
+            left: left.joined(separator: "\n"),
+            right: right.joined(separator: "\n"),
+            ignoreWhitespace: false
+        )
+
+        #expect(result.hunks.count == 2)
+        #expect(result.leftHighlights.count == 1)
+        #expect(result.rightHighlights.count == 1)
+    }
 }
