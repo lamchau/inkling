@@ -16,6 +16,10 @@ build:
 test:
     swift test
 
+# Report Inkling diff metrics for every fixture
+corpus:
+    swift test --filter DiffCorpusTests
+
 # Build and sign the macOS app bundle
 app: build
     mkdir -p "{{ app_bundle }}/Contents/MacOS" "{{ app_bundle }}/Contents/Resources"

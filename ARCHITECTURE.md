@@ -207,3 +207,5 @@ The test suite uses Swift Testing and covers:
 
 Use focused tests while iterating and run `just check` before landing changes
 that affect application behavior or packaging.
+
+`just corpus` emits one stable metrics line per fixture and Inkling algorithm.
