@@ -1,0 +1,2 @@
+The cache expires after 30 seconds.
+The worker retries failed requests 4 times.

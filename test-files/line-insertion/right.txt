@@ -1,0 +1,8 @@
+prepare workspace
+validate permissions
+load configuration
+compare documents
+inspect semantic changes
+review changes
+publish result
+save result

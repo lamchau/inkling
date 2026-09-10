@@ -1,0 +1,3 @@
+The quick brown fox jumps over the sleepy dog near the river bank.
+Inkling compares exact characters, meaningful words, and complete phrases.
+Reviewers can inspect a block, copy it to the right, and undo the operation.

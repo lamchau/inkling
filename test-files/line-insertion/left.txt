@@ -1,0 +1,5 @@
+prepare workspace
+load configuration
+compare documents
+review changes
+save result
