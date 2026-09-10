@@ -3,6 +3,8 @@ import Foundation
 enum DiffEngine {
     private static let matrixCellLimit = 250_000
     private static let pairingThreshold = 0.5
+    private static let editCost = 2
+    private static let gapOpeningCost = 1
 
     static func compare(
         left leftText: String,
@@ -596,16 +598,9 @@ enum DiffEngine {
         _ source: [DiffToken],
         _ other: [DiffToken]
     ) -> [Match] {
-        let sourceAnchors = source.indices.filter { source[$0].kind == .word }
-        let otherAnchors = other.indices.filter { other[$0].kind == .word }
-        return orderedMatches(
-            sourceAnchors.map { source[$0].key },
-            otherAnchors.map { other[$0].key }
-        ).map {
-            Match(
-                left: sourceAnchors[$0.left],
-                right: otherAnchors[$0.right]
-            )
+        groupedMatches(source.map(\.key), other.map(\.key)).compactMap {
+            guard source[$0.left].kind == .word else { return nil }
+            return $0
         }
     }
 
@@ -631,7 +626,7 @@ enum DiffEngine {
     ) -> [NSRange] {
         let sourceUnits = characterUnits(source, ignoreWhitespace: false)
         let otherUnits = characterUnits(other, ignoreWhitespace: false)
-        let matches = orderedMatches(sourceUnits.map(\.value), otherUnits.map(\.value))
+        let matches = groupedMatches(sourceUnits.map(\.value), otherUnits.map(\.value))
         let matchedSource = Set(matches.map(\.left))
         return sourceUnits.indices
             .filter { !matchedSource.contains($0) }
@@ -725,6 +720,97 @@ enum DiffEngine {
         }
         return merged
     }
+
+    private static func groupedMatches(_ left: [String], _ right: [String]) -> [Match] {
+        if right.lexicographicallyPrecedes(left) {
+            return groupedMatchesInCanonicalOrder(right, left).map {
+                Match(left: $0.right, right: $0.left)
+            }
+        }
+        return groupedMatchesInCanonicalOrder(left, right)
+    }
+
+    private static func groupedMatchesInCanonicalOrder(
+        _ left: [String],
+        _ right: [String]
+    ) -> [Match] {
+        guard !left.isEmpty, !right.isEmpty else { return [] }
+        guard left.count * right.count <= matrixCellLimit else {
+            return orderedMatches(left, right)
+        }
+
+        var cells = Array(
+            repeating: Array(repeating: EditCell(), count: right.count + 1),
+            count: left.count + 1
+        )
+        for leftIndex in 1...left.count {
+            cells[leftIndex][0] = EditCell(
+                cost: leftIndex * editCost + gapOpeningCost,
+                operation: .deletion
+            )
+        }
+        for rightIndex in 1...right.count {
+            cells[0][rightIndex] = EditCell(
+                cost: rightIndex * editCost + gapOpeningCost,
+                operation: .insertion
+            )
+        }
+
+        for leftIndex in 1...left.count {
+            for rightIndex in 1...right.count {
+                let deletion = EditCell(
+                    cost: mismatchCost(
+                        from: cells[leftIndex - 1][rightIndex],
+                        baseCost: editCost
+                    ),
+                    operation: .deletion
+                )
+                let insertion = EditCell(
+                    cost: mismatchCost(
+                        from: cells[leftIndex][rightIndex - 1],
+                        baseCost: editCost
+                    ),
+                    operation: .insertion
+                )
+                var best = insertion.cost <= deletion.cost ? insertion : deletion
+                if left[leftIndex - 1] == right[rightIndex - 1] {
+                    let match = EditCell(
+                        cost: cells[leftIndex - 1][rightIndex - 1].cost,
+                        operation: .match
+                    )
+                    if match.cost < best.cost {
+                        best = match
+                    }
+                }
+                cells[leftIndex][rightIndex] = best
+            }
+        }
+
+        var matches: [Match] = []
+        var leftIndex = left.count
+        var rightIndex = right.count
+        while leftIndex > 0 || rightIndex > 0 {
+            switch cells[leftIndex][rightIndex].operation {
+            case .match:
+                matches.append(Match(left: leftIndex - 1, right: rightIndex - 1))
+                leftIndex -= 1
+                rightIndex -= 1
+            case .deletion:
+                leftIndex -= 1
+            case .insertion:
+                rightIndex -= 1
+            case .none:
+                leftIndex = 0
+                rightIndex = 0
+            }
+        }
+        return matches.reversed()
+    }
+
+    private static func mismatchCost(from cell: EditCell, baseCost: Int) -> Int {
+        let opensGap = cell.operation == .match || cell.operation == .none
+        return cell.cost + baseCost + (opensGap ? gapOpeningCost : 0)
+    }
 }
 
 private struct TextLines {
@@ -792,4 +878,16 @@ private struct PairCell {
     var score = 0.0
     var count = 0
     var choice = Choice.none
+}
+
+private enum EditOperation {
+    case none
+    case match
+    case deletion
+    case insertion
+}
+
+private struct EditCell {
+    var cost = 0
+    var operation = EditOperation.none
 }

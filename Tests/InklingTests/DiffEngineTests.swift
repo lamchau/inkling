@@ -243,4 +243,21 @@ struct DiffEngineTests {
             NSRange(location: 0, length: left.utf16.count),
         ])
     }
+
+    @Test("character alignment groups competing edits")
+    func groupedCharacterAlignment() {
+        let result = DiffEngine.compare(
+            left: "ab",
+            right: "ba",
+            ignoreWhitespace: false,
+            algorithm: .character
+        )
+
+        #expect(result.leftHighlights.map(\.range) == [
+            NSRange(location: 0, length: 1),
+        ])
+        #expect(result.rightHighlights.map(\.range) == [
+            NSRange(location: 1, length: 1),
+        ])
+    }
 }
