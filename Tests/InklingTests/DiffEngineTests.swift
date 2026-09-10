@@ -291,4 +291,26 @@ struct DiffEngineTests {
         #expect(result.leftHighlights.count == 1)
         #expect(result.rightHighlights.count == 1)
     }
+
+    @Test("line pairing sensitivity is configurable")
+    func configurableLinePairing() {
+        let left = "shared alpha\nunrelated left"
+        let right = "unrelated right\nshared beta"
+        let normal = DiffEngine.compare(
+            left: left,
+            right: right,
+            ignoreWhitespace: false
+        )
+        let strict = DiffEngine.compare(
+            left: left,
+            right: right,
+            ignoreWhitespace: false,
+            configuration: DiffConfiguration(linePairingThreshold: 1)
+        )
+
+        #expect(normal.leftHighlights.contains { $0.kind.category == .deletion })
+        #expect(normal.rightHighlights.contains { $0.kind.category == .addition })
+        #expect(!strict.leftHighlights.contains { $0.kind.category == .deletion })
+        #expect(!strict.rightHighlights.contains { $0.kind.category == .addition })
+    }
 }

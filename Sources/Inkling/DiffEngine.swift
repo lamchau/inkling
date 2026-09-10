@@ -1,9 +1,23 @@
 import Foundation
 
+struct DiffConfiguration: Equatable, Sendable {
+    static let `default` = DiffConfiguration()
+
+    let linePairingThreshold: Double
+
+    init(linePairingThreshold: Double = 0.5) {
+        precondition(
+            (0...1).contains(linePairingThreshold),
+            "Line pairing threshold must be between 0 and 1."
+        )
+        self.linePairingThreshold = linePairingThreshold
+    }
+}
+
 enum DiffEngine {
     private static let matrixCellLimit = 250_000
     private static let alignmentCellBudget = 2_000_000
-    private static let pairingThreshold = 0.5
+    private static let wordPairingThreshold = 0.5
     private static let editCost = 2
     private static let gapOpeningCost = 1
 
@@ -11,7 +25,8 @@ enum DiffEngine {
         left leftText: String,
         right rightText: String,
         ignoreWhitespace: Bool,
-        algorithm: DiffAlgorithm = .semantic
+        algorithm: DiffAlgorithm = .semantic,
+        configuration: DiffConfiguration = .default
     ) -> DiffResult {
         let left = TextLines(leftText)
         let right = TextLines(rightText)
@@ -41,7 +56,8 @@ enum DiffEngine {
                 let pairs = pairLines(
                     left: Array(left.lines[leftRange]),
                     right: Array(right.lines[rightRange]),
-                    ignoreWhitespace: ignoreWhitespace
+                    ignoreWhitespace: ignoreWhitespace,
+                    pairingThreshold: configuration.linePairingThreshold
                 )
                 var pairedLeft = Set<Int>()
                 var pairedRight = Set<Int>()
@@ -524,7 +540,8 @@ enum DiffEngine {
     private static func pairLines(
         left: [String],
         right: [String],
-        ignoreWhitespace: Bool
+        ignoreWhitespace: Bool,
+        pairingThreshold: Double
     ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
         guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
@@ -535,7 +552,8 @@ enum DiffEngine {
 
         let preferredPairs = similarPairs(
             left.map { normalized($0, ignoreWhitespace: ignoreWhitespace) },
-            right.map { normalized($0, ignoreWhitespace: ignoreWhitespace) }
+            right.map { normalized($0, ignoreWhitespace: ignoreWhitespace) },
+            threshold: pairingThreshold
         )
         return fillUnpairedLines(
             in: preferredPairs,
@@ -544,11 +562,15 @@ enum DiffEngine {
         )
     }
 
-    private static func similarPairs(_ left: [String], _ right: [String]) -> [ScoredMatch] {
+    private static func similarPairs(
+        _ left: [String],
+        _ right: [String],
+        threshold: Double
+    ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
         guard boundedCellCount(left.count, right.count).map({ $0 <= matrixCellLimit }) == true else {
             return zip(left.indices, right.indices).compactMap { leftIndex, rightIndex in
-                similarity(left[leftIndex], right[rightIndex]) >= pairingThreshold
+                similarity(left[leftIndex], right[rightIndex]) >= threshold
                     ? ScoredMatch(left: leftIndex, right: rightIndex)
                     : nil
             }
@@ -569,7 +591,7 @@ enum DiffEngine {
                 }
 
                 let score = similarity(left[leftIndex - 1], right[rightIndex - 1])
-                if score >= pairingThreshold {
+                if score >= threshold {
                     var paired = cells[leftIndex - 1][rightIndex - 1]
                     paired.score += score
                     paired.count += 1
@@ -740,7 +762,8 @@ enum DiffEngine {
         let otherWords = otherRange.filter { other[$0].kind == .word }
         let wordPairs = similarPairs(
             sourceWords.map { source[$0].text },
-            otherWords.map { other[$0].text }
+            otherWords.map { other[$0].text },
+            threshold: wordPairingThreshold
         )
         var pairedSource = Set<Int>()
         var ranges: [ClassifiedRange] = []
