@@ -27,6 +27,8 @@ too little meaning.
 Inkling treats line alignment as structure, not as the final presentation.
 Changed lines are paired, stable words become anchors, related edits become
 phrases, and similar words are refined down to their exact character changes.
+Edit alignment penalizes starting another changed group, which favors coherent
+spans when several equally valid matches exist.
 
 ## Design Principles
 
@@ -74,7 +76,9 @@ phrase, addition, and deletion remain stable categories regardless of palette.
 
 The interface should open directly into a 2-file task, avoid project setup,
 and keep controls close to the comparison. Expensive matching is bounded and
-performed away from the main actor; stale results are discarded.
+performed away from the main actor. Large inputs use stable unique anchors and
+linear-space gap matching before falling back to coarse bounded behavior; stale
+results are discarded.
 
 ## Interaction Model
 

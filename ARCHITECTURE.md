@@ -67,11 +67,15 @@ The pipeline is:
 1. Split both documents into lines while recording UTF-16 offsets compatible
    with `NSTextStorage`.
 2. Normalize line keys when whitespace is ignored.
-3. Find ordered equal-line anchors with longest-common-subsequence matching.
+3. Find ordered equal-line anchors with bounded matching. Large regions first
+   use patience-style unique anchors, then linear-space
+   longest-common-subsequence matching for unresolved gaps.
 4. Turn gaps between anchors into changed line blocks.
 5. Pair similar lines inside each block using character similarity and ordered
    dynamic programming.
-6. Refine each pair according to the selected algorithm:
+6. Refine each pair according to the selected algorithm. Semantic and
+   character matching use insertion/deletion costs plus a gap-opening penalty
+   to avoid needlessly fragmented edit spans:
    - semantic: stable word anchors, phrase classification, similar-word pairing,
      then exact character refinement;
    - word: unmatched word and punctuation tokens;
@@ -81,9 +85,16 @@ The pipeline is:
 8. Derive ordered top-level `DiffChange` ranges and their containing
    `DiffHunk`.
 
-Dynamic-programming matrices are limited to 250,000 cells. Larger inputs use
-bounded prefix/suffix or positional fallbacks rather than allocating an
-unbounded matrix.
+Full dynamic-programming matrices are limited to 250,000 cells. Matching has a
+shared 2,000,000-cell work budget: larger regions retain common boundaries,
+partition around ordered unique anchors, and use Hirschberg linear-space
+matching for unresolved gaps within the remaining budget. This bounds memory
+while preserving useful interior anchors that the former prefix/suffix fallback
+discarded.
+
+`DiffConfiguration` separates the line-pair similarity threshold from
+word-pair refinement. The default remains `0.5`; tests and future advanced
+controls can tune line pairing without changing semantic word behavior.
 
 ## Recompute and Revision Safety
 
@@ -203,7 +214,10 @@ The test suite uses Swift Testing and covers:
 - dirty state, replacement guards, partial saves, and native undo;
 - strict encoding and file-size behavior;
 - horizontal and vertical pane geometry and AppKit highlight rendering;
-- persisted settings and custom palettes.
+- persisted settings and custom palettes;
+- grouped edit alignment, large-input matching, and configurable line pairing;
+- corpus coverage, fragmentation, hunk pairing, and timing across every manual
+  fixture.
 
 Use focused tests while iterating and run `just check` before landing changes
 that affect application behavior or packaging.

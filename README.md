@@ -64,6 +64,11 @@ flowchart LR
 | Logical caret sync | Maps the caret to the corresponding line and column in the other pane |
 | Line numbers | Adds independent gutters without reducing or covering editor text |
 
+Semantic and character alignment use a grouped edit-cost model so nearby edits
+remain coherent instead of fragmenting around ambiguous matches. Large
+comparisons first seek stable unique anchors, then use bounded linear-space
+matching for difficult gaps.
+
 ## Quick Start
 
 ### Requirements
@@ -164,6 +169,7 @@ extremely large or highly reordered changes may receive coarser alignment.
 just             # List recipes
 just build       # Build the Swift executable
 just test        # Run Swift Testing suites
+just corpus      # Report algorithm metrics for every fixture
 just app         # Package and ad-hoc sign the app
 just verify-app  # Verify resources, signature, and launch
 just check       # Run tests and app verification

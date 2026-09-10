@@ -10,6 +10,7 @@ surface area.
 
 ```sh
 just test       # Swift tests
+just corpus     # Diff coverage, fragmentation, and runtime report
 just check      # Tests, signed app build, and launch smoke test
 just run        # Build and open build/Inkling.app
 CONFIGURATION=release just check
@@ -26,6 +27,8 @@ Requirements are macOS 14+, Xcode 16+, Swift 6, and `just`.
 - `DiffSession` owns loaded files, revisions, dirty state, async recomputation,
   navigation, saving, and block transfer.
 - `DiffEngine` produces line, phrase, word, and character differences.
+- `DiffConfiguration` controls internal line-pair sensitivity independently
+  from semantic word refinement.
 - `TextFileService` performs strict supported-encoding decoding and explicit
   file writes.
 - `L10n` resolves the String Catalog from the packaged SwiftPM resource bundle.
@@ -60,6 +63,9 @@ Requirements are macOS 14+, Xcode 16+, Swift 6, and `just`.
   leading glyphs.
 - `DiffChange` is the semantic navigation/counting unit. `DiffHunk` is the
   whole-line block-transfer unit.
+- Keep matching bounded: full matrices are capped, large regions use ordered
+  unique anchors, and unresolved gaps use linear-space matching within a shared
+  work budget.
 - Navigation centers and emphasizes a change without replacing the user's
   selection.
 - Copy Block validates document revisions and ranges, then mutates through the
@@ -77,6 +83,8 @@ Requirements are macOS 14+, Xcode 16+, Swift 6, and `just`.
 
 - Make surgical changes and preserve native macOS conventions.
 - Add focused tests for diff, document-state, or file-I/O behavior changes.
+- Run `just corpus` when changing alignment semantics and compare coverage,
+  span counts, paired hunks, and runtime across the full fixture set.
 - Run the smallest relevant test while iterating; run `just check` before
   landing code that affects the app.
 - Keep generated build output and the untracked root `left.txt` out of commits.
