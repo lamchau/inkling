@@ -62,22 +62,22 @@ struct InklingCommands: Commands {
 
         CommandMenu("Compare") {
             Button("Previous Change") {
-                session.previousHunk()
+                session.previousChange()
             }
             .keyboardShortcut(
                 settings.shortcuts.previousKey,
                 modifiers: settings.shortcuts.modifiers
             )
-            .disabled(session.result.hunks.isEmpty)
+            .disabled(session.result.changes.isEmpty)
 
             Button("Next Change") {
-                session.nextHunk()
+                session.nextChange()
             }
             .keyboardShortcut(
                 settings.shortcuts.nextKey,
                 modifiers: settings.shortcuts.modifiers
             )
-            .disabled(session.result.hunks.isEmpty)
+            .disabled(session.result.changes.isEmpty)
 
             Divider()
 

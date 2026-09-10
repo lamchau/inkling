@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var sharedScrollOrigin = CGPoint.zero
     @State private var sharedCaret: CaretPosition?
     @State private var showsPalette = false
+    @State private var targetedDropSide: DiffSide?
 
     var body: some View {
         @Bindable var session = session
@@ -111,7 +112,7 @@ struct ContentView: View {
                             .overlay(Circle().stroke(.background, lineWidth: 1))
                     }
                 }
-                Text("\(session.result.hunks.count) changes")
+                Text("\(session.result.changes.count) changes")
                     .font(.caption.monospacedDigit())
             }
         }
@@ -119,7 +120,7 @@ struct ContentView: View {
         .popover(isPresented: $showsPalette, arrowEdge: .bottom) {
             ChangePaletteView(
                 result: session.result,
-                currentHunk: session.currentHunkIndex,
+                currentChange: session.currentChangeIndex,
                 highlightStyle: Binding(
                     get: { settings.highlightStyle },
                     set: { settings.highlightStyle = $0 }
@@ -129,10 +130,10 @@ struct ContentView: View {
     }
 
     private var hunkLabel: String {
-        guard let index = session.currentHunkIndex else {
-            return "\(session.result.hunks.count) changes"
+        guard let index = session.currentChangeIndex else {
+            return "\(session.result.changes.count) changes"
         }
-        return "\(index + 1) of \(session.result.hunks.count)"
+        return "\(index + 1) of \(session.result.changes.count)"
     }
 
     private var statusBar: some View {
@@ -177,12 +178,12 @@ struct ContentView: View {
     private var centerRail: some View {
         VStack(spacing: 8) {
             Button {
-                session.previousHunk()
+                session.previousChange()
             } label: {
                 Image(systemName: "chevron.up")
             }
             .help("Previous change (\(settings.shortcuts.title.components(separatedBy: " / ").first ?? ""))")
-            .disabled(session.result.hunks.isEmpty)
+            .disabled(session.result.changes.isEmpty)
 
             Text(hunkLabel)
                 .font(.caption2.monospacedDigit())
@@ -190,12 +191,12 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
 
             Button {
-                session.nextHunk()
+                session.nextChange()
             } label: {
                 Image(systemName: "chevron.down")
             }
             .help("Next change (\(settings.shortcuts.title.components(separatedBy: " / ").last ?? ""))")
-            .disabled(session.result.hunks.isEmpty)
+            .disabled(session.result.changes.isEmpty)
 
             Divider()
                 .padding(.vertical, 4)
@@ -230,38 +231,82 @@ struct ContentView: View {
 
     @ViewBuilder
     private func editor(for side: DiffSide) -> some View {
-        DiffTextView(
-            text: Binding(
-                get: { side == .left ? session.leftText : session.rightText },
-                set: {
-                    if side == .left {
-                        session.leftText = $0
-                    } else {
-                        session.rightText = $0
+        ZStack {
+            DiffTextView(
+                text: Binding(
+                    get: { side == .left ? session.leftText : session.rightText },
+                    set: {
+                        if side == .left {
+                            session.leftText = $0
+                        } else {
+                            session.rightText = $0
+                        }
                     }
+                ),
+                highlights: side == .left
+                    ? session.result.leftHighlights
+                    : session.result.rightHighlights,
+                navigationOffset: side == .left
+                    ? session.leftNavigationOffset
+                    : session.rightNavigationOffset,
+                navigationRevision: session.navigationRevision,
+                side: side,
+                showLineNumbers: settings.showLineNumbers,
+                highlightStyle: settings.highlightStyle,
+                syncScrolling: settings.syncScrolling,
+                syncCaret: settings.syncCaret,
+                sharedScrollOrigin: $sharedScrollOrigin,
+                sharedCaret: $sharedCaret,
+                isDropTargeted: Binding(
+                    get: { targetedDropSide == side },
+                    set: { isTargeted in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            if isTargeted {
+                                targetedDropSide = side
+                            } else if targetedDropSide == side {
+                                targetedDropSide = nil
+                            }
+                        }
+                    }
+                ),
+                onDrop: { urls in
+                    guard urls.count == 1 else { return false }
+                    session.openDroppedFiles(urls, on: side)
+                    return true
                 }
-            ),
-            highlights: side == .left
-                ? session.result.leftHighlights
-                : session.result.rightHighlights,
-            navigationOffset: side == .left
-                ? session.leftNavigationOffset
-                : session.rightNavigationOffset,
-            navigationRevision: session.navigationRevision,
-            side: side,
-            showLineNumbers: settings.showLineNumbers,
-            highlightStyle: settings.highlightStyle,
-            syncScrolling: settings.syncScrolling,
-            syncCaret: settings.syncCaret,
-            sharedScrollOrigin: $sharedScrollOrigin,
-            sharedCaret: $sharedCaret
-        )
-        .accessibilityLabel(side == .left ? "Left file editor" : "Right file editor")
-        .dropDestination(for: URL.self) { urls, _ in
-            guard urls.count == 1 else { return false }
-            session.openDroppedFiles(urls, on: side)
-            return true
+            )
+
+            if targetedDropSide == side {
+                dropZone(for: side)
+                    .transition(.opacity)
+            }
         }
+        .accessibilityLabel(side == .left ? "Left file editor" : "Right file editor")
+    }
+
+    private func dropZone(for side: DiffSide) -> some View {
+        ZStack {
+            Color.accentColor.opacity(0.15)
+
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    Color.accentColor,
+                    style: StrokeStyle(lineWidth: 3, dash: [9, 7])
+                )
+
+            Label(
+                side == .left ? "Drop file on left" : "Drop file on right",
+                systemImage: "arrow.down.doc"
+            )
+            .font(.title2.weight(.semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+        .padding(12)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private func color(for category: ChangeCategory) -> Color {
@@ -295,7 +340,7 @@ struct ContentView: View {
 
     private struct ChangePaletteView: View {
         let result: DiffResult
-        let currentHunk: Int?
+        let currentChange: Int?
         @Binding var highlightStyle: HighlightStyle
 
         var body: some View {
@@ -304,7 +349,7 @@ struct ContentView: View {
                     Text("Change Palette")
                         .font(.headline)
                     Spacer()
-                    Text("\(result.hunks.count) total")
+                    Text("\(result.changes.count) total")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -330,9 +375,9 @@ struct ContentView: View {
                     }
                 }
 
-                if let currentHunk {
+                if let currentChange {
                     Divider()
-                    Text("Viewing change \(currentHunk + 1) of \(result.hunks.count)")
+                    Text("Viewing change \(currentChange + 1) of \(result.changes.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

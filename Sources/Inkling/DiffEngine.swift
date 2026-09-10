@@ -19,6 +19,7 @@ enum DiffEngine {
         var leftHighlights: [TextHighlight] = []
         var rightHighlights: [TextHighlight] = []
         var hunks: [DiffHunk] = []
+        var changes: [DiffChange] = []
         var previousLeft = 0
         var previousRight = 0
         var nextPairColor = 0
@@ -49,7 +50,7 @@ enum DiffEngine {
                     pairedRight.insert(rightLineIndex)
                     let color = nextPairColor % 6
                     nextPairColor += 1
-                    leftHighlights += characterHighlights(
+                    let pairLeftHighlights = characterHighlights(
                         source: left.lines[leftLineIndex],
                         other: right.lines[rightLineIndex],
                         lineOffset: left.offsets[leftLineIndex],
@@ -57,7 +58,7 @@ enum DiffEngine {
                         algorithm: algorithm,
                         ignoreWhitespace: ignoreWhitespace
                     )
-                    rightHighlights += characterHighlights(
+                    let pairRightHighlights = characterHighlights(
                         source: right.lines[rightLineIndex],
                         other: left.lines[leftLineIndex],
                         lineOffset: right.offsets[rightLineIndex],
@@ -65,24 +66,49 @@ enum DiffEngine {
                         algorithm: algorithm,
                         ignoreWhitespace: ignoreWhitespace
                     )
+                    leftHighlights += pairLeftHighlights
+                    rightHighlights += pairRightHighlights
+                    changes += makeChanges(
+                        leftHighlights: pairLeftHighlights,
+                        rightHighlights: pairRightHighlights,
+                        hunkID: hunkID,
+                        leftFallback: left.offsets[leftLineIndex],
+                        rightFallback: right.offsets[rightLineIndex]
+                    )
                 }
 
                 for lineIndex in leftRange where !pairedLeft.contains(lineIndex) {
                     if !ignoreWhitespace || !leftKeys[lineIndex].isEmpty {
-                        leftHighlights.append(fullLineHighlight(
+                        let highlight = fullLineHighlight(
                             line: left.lines[lineIndex],
                             offset: left.offsets[lineIndex],
                             kind: .deletion
-                        ))
+                        )
+                        leftHighlights.append(highlight)
+                        changes += makeChanges(
+                            leftHighlights: [highlight],
+                            rightHighlights: [],
+                            hunkID: hunkID,
+                            leftFallback: left.offsets[lineIndex],
+                            rightFallback: right.offset(at: rightRange.lowerBound)
+                        )
                     }
                 }
                 for lineIndex in rightRange where !pairedRight.contains(lineIndex) {
                     if !ignoreWhitespace || !rightKeys[lineIndex].isEmpty {
-                        rightHighlights.append(fullLineHighlight(
+                        let highlight = fullLineHighlight(
                             line: right.lines[lineIndex],
                             offset: right.offsets[lineIndex],
                             kind: .addition
-                        ))
+                        )
+                        rightHighlights.append(highlight)
+                        changes += makeChanges(
+                            leftHighlights: [],
+                            rightHighlights: [highlight],
+                            hunkID: hunkID,
+                            leftFallback: left.offset(at: leftRange.lowerBound),
+                            rightFallback: right.offsets[lineIndex]
+                        )
                     }
                 }
 
@@ -104,11 +130,72 @@ enum DiffEngine {
             }
         }
 
+        let orderedChanges = changes
+            .sorted {
+                if $0.hunkID != $1.hunkID {
+                    return $0.hunkID < $1.hunkID
+                }
+                return min($0.leftNavigationOffset, $0.rightNavigationOffset)
+                    < min($1.leftNavigationOffset, $1.rightNavigationOffset)
+            }
+            .enumerated()
+            .map { index, change in
+                DiffChange(
+                    id: index,
+                    hunkID: change.hunkID,
+                    leftRange: change.leftRange,
+                    rightRange: change.rightRange,
+                    leftNavigationOffset: change.leftNavigationOffset,
+                    rightNavigationOffset: change.rightNavigationOffset
+                )
+            }
         return DiffResult(
             leftHighlights: leftHighlights.filter { $0.range.length > 0 },
             rightHighlights: rightHighlights.filter { $0.range.length > 0 },
-            hunks: hunks
+            hunks: hunks,
+            changes: orderedChanges
         )
+    }
+
+    private static func makeChanges(
+        leftHighlights: [TextHighlight],
+        rightHighlights: [TextHighlight],
+        hunkID: Int,
+        leftFallback: Int,
+        rightFallback: Int
+    ) -> [DiffChange] {
+        let leftRanges = topLevelRanges(in: leftHighlights)
+        let rightRanges = topLevelRanges(in: rightHighlights)
+        let count = max(leftRanges.count, rightRanges.count)
+        return (0..<count).map { index in
+            let leftRange = leftRanges.indices.contains(index) ? leftRanges[index] : nil
+            let rightRange = rightRanges.indices.contains(index) ? rightRanges[index] : nil
+            return DiffChange(
+                id: 0,
+                hunkID: hunkID,
+                leftRange: leftRange,
+                rightRange: rightRange,
+                leftNavigationOffset: leftRange?.location ?? leftFallback,
+                rightNavigationOffset: rightRange?.location ?? rightFallback
+            )
+        }
+    }
+
+    private static func topLevelRanges(in highlights: [TextHighlight]) -> [NSRange] {
+        let ranges = highlights.reduce(into: [NSRange]()) { ranges, highlight in
+            if !ranges.contains(highlight.range) {
+                ranges.append(highlight.range)
+            }
+        }
+        return ranges
+            .filter { candidate in
+                !ranges.contains {
+                    $0 != candidate
+                        && NSLocationInRange(candidate.location, $0)
+                        && NSMaxRange(candidate) <= NSMaxRange($0)
+                }
+            }
+            .sorted { $0.location < $1.location }
     }
 
     private static func normalized(_ line: String, ignoreWhitespace: Bool) -> String {

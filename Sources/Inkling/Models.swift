@@ -57,12 +57,27 @@ struct DiffHunk: Identifiable, Equatable, Sendable {
     let rightNavigationOffset: Int
 }
 
+struct DiffChange: Identifiable, Equatable, Sendable {
+    let id: Int
+    let hunkID: Int
+    let leftRange: NSRange?
+    let rightRange: NSRange?
+    let leftNavigationOffset: Int
+    let rightNavigationOffset: Int
+}
+
 struct DiffResult: Equatable, Sendable {
     let leftHighlights: [TextHighlight]
     let rightHighlights: [TextHighlight]
     let hunks: [DiffHunk]
+    let changes: [DiffChange]
 
-    static let empty = DiffResult(leftHighlights: [], rightHighlights: [], hunks: [])
+    static let empty = DiffResult(
+        leftHighlights: [],
+        rightHighlights: [],
+        hunks: [],
+        changes: []
+    )
 }
 
 struct LoadedTextFile: Sendable {

@@ -31,6 +31,7 @@ struct DiffEngineTests {
         #expect(result.rightHighlights.allSatisfy {
             $0.kind == result.leftHighlights[0].kind
         })
+        #expect(result.changes.count == 1)
     }
 
     @Test("similar changed words refine to characters")
@@ -74,6 +75,9 @@ struct DiffEngineTests {
             $0.range == NSRange(location: 21, length: 1)
                 && $0.kind.category == .character
         })
+        #expect(result.changes.count == 1)
+        #expect(result.changes[0].leftNavigationOffset == 15)
+        #expect(result.changes[0].rightNavigationOffset == 15)
     }
 
     @Test("semantic anchors remain local in long prose")
@@ -194,6 +198,10 @@ struct DiffEngineTests {
             NSRange(location: 4, length: 4),
             NSRange(location: 16, length: 5),
         ])
+        #expect(result.hunks.count == 1)
+        #expect(result.changes.count == 2)
+        #expect(result.changes.map(\.leftNavigationOffset) == [4, 17])
+        #expect(result.changes.map(\.rightNavigationOffset) == [4, 16])
     }
 
     @Test("algorithms expose distinct levels of detail")

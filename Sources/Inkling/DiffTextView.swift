@@ -2,9 +2,65 @@ import AppKit
 import SwiftUI
 
 @MainActor
+final class FileDropTargetView: NSView {
+    var onTargetChange: (Bool) -> Void = { _ in }
+    var onDrop: ([URL]) -> Bool = { _ in false }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true,
+        ]
+        return NSPasteboard(name: .drag).canReadObject(
+            forClasses: [NSURL.self],
+            options: options
+        ) ? self : nil
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard fileURLs(from: sender).count == 1 else { return [] }
+        onTargetChange(true)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        onTargetChange(false)
+    }
+
+    override func draggingEnded(_ sender: any NSDraggingInfo) {
+        onTargetChange(false)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        onTargetChange(false)
+        let urls = fileURLs(from: sender)
+        return urls.count == 1 && onDrop(urls)
+    }
+
+    private func fileURLs(from sender: any NSDraggingInfo) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true,
+        ]
+        return (sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [URL]) ?? []
+    }
+}
+
+@MainActor
 final class DiffEditorContainerView: NSView {
     let scrollView: NSScrollView
     let gutterView: LineNumberGutterView
+    let dropTargetView = FileDropTargetView()
     var showsLineNumbers = false {
         didSet {
             gutterView.isHidden = !showsLineNumbers
@@ -18,6 +74,7 @@ final class DiffEditorContainerView: NSView {
         super.init(frame: .zero)
         addSubview(gutterView)
         addSubview(scrollView)
+        addSubview(dropTargetView)
     }
 
     required init?(coder: NSCoder) {
@@ -34,6 +91,7 @@ final class DiffEditorContainerView: NSView {
             width: max(0, bounds.width - gutterWidth),
             height: bounds.height
         )
+        dropTargetView.frame = bounds
     }
 }
 
@@ -49,6 +107,8 @@ struct DiffTextView: NSViewRepresentable {
     let syncCaret: Bool
     @Binding var sharedScrollOrigin: CGPoint
     @Binding var sharedCaret: CaretPosition?
+    @Binding var isDropTargeted: Bool
+    let onDrop: ([URL]) -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -95,6 +155,7 @@ struct DiffTextView: NSViewRepresentable {
         context.coordinator.scrollView = scrollView
         context.coordinator.gutterView = gutterView
         context.coordinator.observeScroll()
+        configureDropTarget(containerView, context: context)
         updateLineNumbers(containerView)
         Self.applyHighlights(highlights, style: highlightStyle, to: textView)
         return containerView
@@ -104,6 +165,7 @@ struct DiffTextView: NSViewRepresentable {
         context.coordinator.parent = self
         let scrollView = containerView.scrollView
         guard let textView = context.coordinator.textView else { return }
+        configureDropTarget(containerView, context: context)
         if textView.string != text {
             let selectedRanges = textView.selectedRanges
             context.coordinator.isApplyingUpdate = true
@@ -264,6 +326,18 @@ struct DiffTextView: NSViewRepresentable {
     private func updateLineNumbers(_ containerView: DiffEditorContainerView) {
         containerView.showsLineNumbers = showLineNumbers
         containerView.gutterView.needsDisplay = true
+    }
+
+    private func configureDropTarget(
+        _ containerView: DiffEditorContainerView,
+        context: Context
+    ) {
+        containerView.dropTargetView.onTargetChange = { isTargeted in
+            context.coordinator.parent.isDropTargeted = isTargeted
+        }
+        containerView.dropTargetView.onDrop = { urls in
+            context.coordinator.parent.onDrop(urls)
+        }
     }
 
     private func center(_ offset: Int, in textView: NSTextView, scrollView: NSScrollView) {

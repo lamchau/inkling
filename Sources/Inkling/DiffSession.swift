@@ -25,7 +25,7 @@ final class DiffSession {
         didSet { scheduleRefresh() }
     }
     var result = DiffResult.empty
-    var currentHunkIndex: Int?
+    var currentChangeIndex: Int?
     var leftNavigationOffset = 0
     var rightNavigationOffset = 0
     var navigationRevision = 0
@@ -40,11 +40,22 @@ final class DiffSession {
         leftURL != nil && rightURL != nil
     }
 
-    var currentHunk: DiffHunk? {
-        guard let currentHunkIndex, result.hunks.indices.contains(currentHunkIndex) else {
+    var currentChange: DiffChange? {
+        guard let currentChangeIndex,
+              result.changes.indices.contains(currentChangeIndex)
+        else {
             return nil
         }
-        return result.hunks[currentHunkIndex]
+        return result.changes[currentChangeIndex]
+    }
+
+    var currentHunk: DiffHunk? {
+        guard let currentChange,
+              result.hunks.indices.contains(currentChange.hunkID)
+        else {
+            return nil
+        }
+        return result.hunks[currentChange.hunkID]
     }
 
     func chooseFile(for side: DiffSide) {
@@ -142,11 +153,11 @@ final class DiffSession {
         }
     }
 
-    func nextHunk() {
+    func nextChange() {
         navigate(by: 1)
     }
 
-    func previousHunk() {
+    func previousChange() {
         navigate(by: -1)
     }
 
@@ -169,7 +180,7 @@ final class DiffSession {
     func swapSides() {
         swap(&leftURL, &rightURL)
         swap(&leftText, &rightText)
-        currentHunkIndex = nil
+        currentChangeIndex = nil
         statusMessage = "Swapped sides."
         refreshImmediately()
     }
@@ -223,29 +234,33 @@ final class DiffSession {
     }
 
     private func navigate(by delta: Int) {
-        guard !result.hunks.isEmpty else { return }
-        let current = currentHunkIndex ?? (delta > 0 ? -1 : 0)
-        currentHunkIndex = (current + delta + result.hunks.count) % result.hunks.count
-        revealCurrentHunk()
+        guard !result.changes.isEmpty else { return }
+        let current = currentChangeIndex ?? (delta > 0 ? -1 : 0)
+        currentChangeIndex = (current + delta + result.changes.count) % result.changes.count
+        revealCurrentChange()
     }
 
     private func reconcileNavigation() {
-        if result.hunks.isEmpty {
-            currentHunkIndex = nil
+        if result.changes.isEmpty {
+            currentChangeIndex = nil
             statusMessage = "Files are identical."
         } else {
-            if let currentHunkIndex {
-                self.currentHunkIndex = min(currentHunkIndex, result.hunks.count - 1)
+            if let currentChangeIndex {
+                self.currentChangeIndex = min(
+                    currentChangeIndex,
+                    result.changes.count - 1
+                )
             }
-            statusMessage = "\(result.hunks.count) change\(result.hunks.count == 1 ? "" : "s")."
-            revealCurrentHunk()
+            let count = result.changes.count
+            statusMessage = "\(count) change\(count == 1 ? "" : "s")."
+            revealCurrentChange()
         }
     }
 
-    private func revealCurrentHunk() {
-        guard let currentHunk else { return }
-        leftNavigationOffset = currentHunk.leftNavigationOffset
-        rightNavigationOffset = currentHunk.rightNavigationOffset
+    private func revealCurrentChange() {
+        guard let currentChange else { return }
+        leftNavigationOffset = currentChange.leftNavigationOffset
+        rightNavigationOffset = currentChange.rightNavigationOffset
         navigationRevision += 1
     }
 
