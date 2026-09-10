@@ -47,6 +47,67 @@ enum HighlightStyle: String, CaseIterable, Identifiable {
     }
 }
 
+struct PaletteColor: Codable, Equatable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let alpha: Double
+
+    init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+    }
+
+    init(_ color: NSColor) {
+        let color = color.usingColorSpace(.sRGB) ?? color
+        red = Double(color.redComponent)
+        green = Double(color.greenComponent)
+        blue = Double(color.blueComponent)
+        alpha = Double(color.alphaComponent)
+    }
+
+    var nsColor: NSColor {
+        NSColor(
+            srgbRed: red,
+            green: green,
+            blue: blue,
+            alpha: alpha
+        )
+    }
+}
+
+struct DiffPalette: Codable, Equatable, Sendable {
+    var character = PaletteColor(NSColor.systemPink)
+    var word = PaletteColor(NSColor.systemOrange)
+    var phrase = PaletteColor(NSColor.systemBlue)
+    var addition = PaletteColor(NSColor.systemGreen)
+    var deletion = PaletteColor(NSColor.systemRed)
+
+    static let `default` = DiffPalette()
+
+    func color(for category: ChangeCategory) -> PaletteColor {
+        switch category {
+        case .character: character
+        case .word: word
+        case .phrase: phrase
+        case .addition: addition
+        case .deletion: deletion
+        }
+    }
+
+    mutating func setColor(_ color: PaletteColor, for category: ChangeCategory) {
+        switch category {
+        case .character: character = color
+        case .word: word = color
+        case .phrase: phrase = color
+        case .addition: addition = color
+        case .deletion: deletion = color
+        }
+    }
+}
+
 enum ShortcutPreset: String, CaseIterable, Identifiable {
     case commandOptionArrows
     case commandBrackets
@@ -100,6 +161,7 @@ final class AppSettings {
         static let syncCaret = "syncCaret"
         static let shortcuts = "navigationShortcuts"
         static let highlightStyle = "highlightStyle"
+        static let palette = "diffPalette"
     }
 
     var algorithm: DiffAlgorithm {
@@ -120,6 +182,11 @@ final class AppSettings {
     var highlightStyle: HighlightStyle {
         didSet { defaults.set(highlightStyle.rawValue, forKey: Key.highlightStyle) }
     }
+    var palette: DiffPalette {
+        didSet {
+            defaults.set(try? JSONEncoder().encode(palette), forKey: Key.palette)
+        }
+    }
 
     private let defaults: UserDefaults
 
@@ -137,5 +204,20 @@ final class AppSettings {
         highlightStyle = HighlightStyle(
             rawValue: defaults.string(forKey: Key.highlightStyle) ?? ""
         ) ?? .foreground
+        palette = defaults.data(forKey: Key.palette)
+            .flatMap { try? JSONDecoder().decode(DiffPalette.self, from: $0) }
+            ?? .default
+    }
+
+    func color(for category: ChangeCategory) -> NSColor {
+        palette.color(for: category).nsColor
+    }
+
+    func setColor(_ color: NSColor, for category: ChangeCategory) {
+        palette.setColor(PaletteColor(color), for: category)
+    }
+
+    func resetPalette() {
+        palette = .default
     }
 }

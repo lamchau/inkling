@@ -98,11 +98,13 @@ final class DiffEditorContainerView: NSView {
 struct DiffTextView: NSViewRepresentable {
     @Binding var text: String
     let highlights: [TextHighlight]
+    let currentChangeRange: NSRange?
     let navigationOffset: Int
     let navigationRevision: Int
     let side: DiffSide
     let showLineNumbers: Bool
     let highlightStyle: HighlightStyle
+    let palette: DiffPalette
     let syncScrolling: Bool
     let syncCaret: Bool
     @Binding var sharedScrollOrigin: CGPoint
@@ -161,7 +163,13 @@ struct DiffTextView: NSViewRepresentable {
         onEditorChange(textView)
         configureDropTarget(containerView, context: context)
         updateLineNumbers(containerView)
-        Self.applyHighlights(highlights, style: highlightStyle, to: textView)
+        Self.applyHighlights(
+            highlights,
+            currentChangeRange: currentChangeRange,
+            style: highlightStyle,
+            palette: palette,
+            to: textView
+        )
         return containerView
     }
 
@@ -185,14 +193,26 @@ struct DiffTextView: NSViewRepresentable {
             x: 0,
             y: scrollView.contentView.bounds.origin.y
         ))
-        Self.applyHighlights(highlights, style: highlightStyle, to: textView)
+        Self.applyHighlights(
+            highlights,
+            currentChangeRange: currentChangeRange,
+            style: highlightStyle,
+            palette: palette,
+            to: textView
+        )
 
         if context.coordinator.lastNavigationRevision != navigationRevision {
             context.coordinator.lastNavigationRevision = navigationRevision
             context.coordinator.lastNavigationOffset = navigationOffset
             let safeOffset = min(navigationOffset, textView.string.utf16.count)
-            textView.setSelectedRange(NSRange(location: safeOffset, length: 0))
             center(safeOffset, in: textView, scrollView: scrollView)
+            if let currentRange = Self.currentDisplayRange(
+                currentChangeRange,
+                fallbackOffset: safeOffset,
+                textLength: textView.string.utf16.count
+            ) {
+                textView.showFindIndicator(for: currentRange)
+            }
         }
 
         if syncScrolling,
@@ -233,7 +253,9 @@ struct DiffTextView: NSViewRepresentable {
 
     static func applyHighlights(
         _ highlights: [TextHighlight],
+        currentChangeRange: NSRange? = nil,
         style: HighlightStyle = .foreground,
+        palette: DiffPalette = .default,
         to textView: NSTextView
     ) {
         guard let storage = textView.textStorage, let layoutManager = textView.layoutManager else {
@@ -268,7 +290,7 @@ struct DiffTextView: NSViewRepresentable {
         }) {
             let range = NSIntersectionRange(highlight.range, fullRange)
             guard range.length > 0 else { continue }
-            let color = color(for: highlight.kind)
+            let color = palette.color(for: highlight.kind.category).nsColor
             switch style {
             case .foreground:
                 layoutManager.addTemporaryAttribute(
@@ -298,6 +320,16 @@ struct DiffTextView: NSViewRepresentable {
                 }
             }
         }
+        if let currentRange = currentDisplayRange(
+            currentChangeRange,
+            fallbackOffset: 0,
+            textLength: storage.length
+        ) {
+            layoutManager.addTemporaryAttributes([
+                .underlineStyle: NSUnderlineStyle.double.rawValue,
+                .underlineColor: NSColor.controlAccentColor,
+            ], forCharacterRange: currentRange)
+        }
         textView.needsDisplay = true
     }
 
@@ -321,23 +353,20 @@ struct DiffTextView: NSViewRepresentable {
         }
     }
 
-    private static func color(for kind: HighlightKind) -> NSColor {
-        switch kind {
-        case .addition:
-            return .systemGreen
-        case .deletion:
-            return .systemRed
-        case let .character(index):
-            return alternating([.systemPink, .systemPurple], index: index)
-        case let .word(index):
-            return alternating([.systemOrange, .systemYellow], index: index)
-        case let .phrase(index):
-            return alternating([.systemBlue, .systemTeal], index: index)
+    private static func currentDisplayRange(
+        _ range: NSRange?,
+        fallbackOffset: Int,
+        textLength: Int
+    ) -> NSRange? {
+        guard let range else { return nil }
+        if range.length > 0, NSMaxRange(range) <= textLength {
+            return range
         }
-    }
-
-    private static func alternating(_ colors: [NSColor], index: Int) -> NSColor {
-        colors[index % colors.count]
+        guard textLength > 0 else { return nil }
+        return NSRange(
+            location: min(fallbackOffset, textLength - 1),
+            length: 1
+        )
     }
 
     private func updateLineNumbers(_ containerView: DiffEditorContainerView) {

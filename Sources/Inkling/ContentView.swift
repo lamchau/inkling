@@ -192,7 +192,7 @@ struct ContentView: View {
                 HStack(spacing: -2) {
                     ForEach(ChangeCategory.allCases) { category in
                         Circle()
-                            .fill(color(for: category))
+                            .fill(Color(nsColor: settings.color(for: category)))
                             .frame(width: 9, height: 9)
                             .overlay(Circle().stroke(.background, lineWidth: 1))
                     }
@@ -206,6 +206,7 @@ struct ContentView: View {
             ChangePaletteView(
                 result: session.result,
                 currentChange: session.currentChangeIndex,
+                settings: settings,
                 highlightStyle: Binding(
                     get: { settings.highlightStyle },
                     set: { settings.highlightStyle = $0 }
@@ -343,6 +344,7 @@ struct ContentView: View {
                 highlights: side == .left
                     ? session.result.leftHighlights
                     : session.result.rightHighlights,
+                currentChangeRange: currentRange(for: side),
                 navigationOffset: side == .left
                     ? session.leftNavigationOffset
                     : session.rightNavigationOffset,
@@ -350,6 +352,7 @@ struct ContentView: View {
                 side: side,
                 showLineNumbers: settings.showLineNumbers,
                 highlightStyle: settings.highlightStyle,
+                palette: settings.palette,
                 syncScrolling: settings.syncScrolling,
                 syncCaret: settings.syncCaret,
                 sharedScrollOrigin: $sharedScrollOrigin,
@@ -418,13 +421,15 @@ struct ContentView: View {
         .accessibilityHidden(true)
     }
 
-    private func color(for category: ChangeCategory) -> Color {
-        switch category {
-        case .character: .pink
-        case .word: .orange
-        case .phrase: .blue
-        case .addition: .green
-        case .deletion: .red
+    private func currentRange(for side: DiffSide) -> NSRange? {
+        guard let change = session.currentChange else { return nil }
+        switch side {
+        case .left:
+            return change.leftRange
+                ?? NSRange(location: change.leftNavigationOffset, length: 0)
+        case .right:
+            return change.rightRange
+                ?? NSRange(location: change.rightNavigationOffset, length: 0)
         }
     }
 
@@ -541,6 +546,7 @@ struct ContentView: View {
     private struct ChangePaletteView: View {
         let result: DiffResult
         let currentChange: Int?
+        let settings: AppSettings
         @Binding var highlightStyle: HighlightStyle
 
         var body: some View {
@@ -564,15 +570,23 @@ struct ContentView: View {
 
                 ForEach(ChangeCategory.allCases) { category in
                     HStack {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(color(for: category))
-                            .frame(width: 28, height: 14)
+                        ColorPicker(
+                            "",
+                            selection: colorBinding(for: category),
+                            supportsOpacity: false
+                        )
+                        .labelsHidden()
+                        .frame(width: 30)
                         Text(category.title)
                         Spacer()
                         Text("\(count(category))")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Button(L10n.string("Reset Colors")) {
+                    settings.resetPalette()
                 }
 
                 if let currentChange {
@@ -587,7 +601,7 @@ struct ContentView: View {
                 }
             }
             .padding(16)
-            .frame(width: 250)
+            .frame(width: 280)
         }
 
         private func count(_ category: ChangeCategory) -> Int {
@@ -595,14 +609,11 @@ struct ContentView: View {
                 .count { $0.kind.category == category }
         }
 
-        private func color(for category: ChangeCategory) -> Color {
-            switch category {
-            case .character: .pink
-            case .word: .orange
-            case .phrase: .blue
-            case .addition: .green
-            case .deletion: .red
-            }
+        private func colorBinding(for category: ChangeCategory) -> Binding<Color> {
+            Binding(
+                get: { Color(nsColor: settings.color(for: category)) },
+                set: { settings.setColor(NSColor($0), for: category) }
+            )
         }
     }
 }

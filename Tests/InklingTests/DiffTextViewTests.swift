@@ -166,9 +166,60 @@ struct DiffTextViewTests {
             effectiveRange: nil
         ) as? Int
 
-        #expect(wordForeground == .systemOrange)
-        #expect(characterForeground == .systemPink)
+        #expect(wordForeground == DiffPalette.default.word.nsColor)
+        #expect(characterForeground == DiffPalette.default.character.nsColor)
         #expect(underline == NSUnderlineStyle.thick.rawValue)
+    }
+
+    @Test("custom palette colors drive rendered highlights")
+    func customPalette() {
+        let textView = NSTextView()
+        textView.string = "alpha"
+        var palette = DiffPalette.default
+        palette.setColor(
+            PaletteColor(red: 0.1, green: 0.2, blue: 0.3),
+            for: .word
+        )
+
+        DiffTextView.applyHighlights(
+            [TextHighlight(range: NSRange(location: 0, length: 5), kind: .word(0))],
+            palette: palette,
+            to: textView
+        )
+
+        let foreground = textView.layoutManager?.temporaryAttribute(
+            .foregroundColor,
+            atCharacterIndex: 2,
+            effectiveRange: nil
+        ) as? NSColor
+        #expect(foreground == palette.word.nsColor)
+    }
+
+    @Test("current change stays visibly marked without changing selection")
+    func currentChangeEmphasis() {
+        let textView = NSTextView()
+        textView.string = "alpha beta"
+        textView.setSelectedRange(NSRange(location: 0, length: 5))
+
+        DiffTextView.applyHighlights(
+            [],
+            currentChangeRange: NSRange(location: 6, length: 4),
+            to: textView
+        )
+
+        let underline = textView.layoutManager?.temporaryAttribute(
+            .underlineStyle,
+            atCharacterIndex: 7,
+            effectiveRange: nil
+        ) as? Int
+        let underlineColor = textView.layoutManager?.temporaryAttribute(
+            .underlineColor,
+            atCharacterIndex: 7,
+            effectiveRange: nil
+        ) as? NSColor
+        #expect(underline == NSUnderlineStyle.double.rawValue)
+        #expect(underlineColor == .controlAccentColor)
+        #expect(textView.selectedRange() == NSRange(location: 0, length: 5))
     }
 
     @Test("AppKit editor keeps text at the leading edge with line numbers")
