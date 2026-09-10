@@ -13,7 +13,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Inkling",
-            path: "Sources/Inkling"
+            path: "Sources/Inkling",
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "InklingTests",

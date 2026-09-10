@@ -34,7 +34,13 @@ enum ChangeCategory: String, CaseIterable, Identifiable, Sendable {
     var id: Self { self }
 
     var title: String {
-        rawValue.capitalized
+        switch self {
+        case .character: L10n.string("Character")
+        case .word: L10n.string("Word")
+        case .phrase: L10n.string("Phrase")
+        case .addition: L10n.string("Addition")
+        case .deletion: L10n.string("Deletion")
+        }
     }
 }
 
@@ -71,6 +77,31 @@ struct DiffResult: Equatable, Sendable {
     let rightHighlights: [TextHighlight]
     let hunks: [DiffHunk]
     let changes: [DiffChange]
+    let documentRevision: Int
+
+    init(
+        leftHighlights: [TextHighlight],
+        rightHighlights: [TextHighlight],
+        hunks: [DiffHunk],
+        changes: [DiffChange],
+        documentRevision: Int = 0
+    ) {
+        self.leftHighlights = leftHighlights
+        self.rightHighlights = rightHighlights
+        self.hunks = hunks
+        self.changes = changes
+        self.documentRevision = documentRevision
+    }
+
+    func stamped(with documentRevision: Int) -> DiffResult {
+        DiffResult(
+            leftHighlights: leftHighlights,
+            rightHighlights: rightHighlights,
+            hunks: hunks,
+            changes: changes,
+            documentRevision: documentRevision
+        )
+    }
 
     static let empty = DiffResult(
         leftHighlights: [],
@@ -92,21 +123,32 @@ enum InklingError: LocalizedError {
     case binary(URL)
     case sameFile
     case requiresTwoFiles
+    case staleDiff
 
     var errorDescription: String? {
         switch self {
         case let .unreadable(url, error):
-            "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
+            L10n.string(
+                "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
+            )
         case let .unwritable(url, error):
-            "Could not save \(url.lastPathComponent): \(error.localizedDescription)"
+            L10n.string(
+                "Could not save \(url.lastPathComponent): \(error.localizedDescription)"
+            )
         case let .tooLarge(url):
-            "\(url.lastPathComponent) is larger than the 5 MiB limit."
+            L10n.string("\(url.lastPathComponent) is larger than the 5 MiB limit.")
         case let .binary(url):
-            "\(url.lastPathComponent) contains binary data and cannot be compared."
+            L10n.string(
+                "\(url.lastPathComponent) contains binary data and cannot be compared."
+            )
         case .sameFile:
-            "Choose two different files."
+            L10n.string("Choose 2 different files.")
         case .requiresTwoFiles:
-            "Select exactly two files to start a comparison."
+            L10n.string("2 files are required to start a comparison.")
+        case .staleDiff:
+            L10n.string(
+                "The comparison is out of date. Wait for it to refresh before copying a change."
+            )
         }
     }
 }

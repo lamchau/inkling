@@ -15,13 +15,11 @@ struct TextFileService: Sendable {
         guard data.count <= Self.maximumSize else {
             throw InklingError.tooLarge(canonicalURL)
         }
-        guard !data.contains(0) else {
+
+        guard let text = decode(data), !text.contains("\0") else {
             throw InklingError.binary(canonicalURL)
         }
 
-        let text = String(data: data, encoding: .utf8)
-            ?? String(data: data, encoding: .utf16)
-            ?? String(decoding: data, as: UTF8.self)
         return LoadedTextFile(url: canonicalURL, text: text)
     }
 
@@ -31,5 +29,32 @@ struct TextFileService: Sendable {
         } catch {
             throw InklingError.unwritable(url, error)
         }
+    }
+
+    private func decode(_ data: Data) -> String? {
+        if data.starts(with: [0xEF, 0xBB, 0xBF]) {
+            return String(data: data.dropFirst(3), encoding: .utf8)
+        }
+        if data.starts(with: [0xFF, 0xFE]) {
+            return decodeUTF16(data.dropFirst(2), encoding: .utf16LittleEndian)
+        }
+        if data.starts(with: [0xFE, 0xFF]) {
+            return decodeUTF16(data.dropFirst(2), encoding: .utf16BigEndian)
+        }
+
+        guard !data.contains(0) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func decodeUTF16(
+        _ data: Data.SubSequence,
+        encoding: String.Encoding
+    ) -> String? {
+        guard data.count.isMultiple(of: 2) else {
+            return nil
+        }
+        return String(data: data, encoding: encoding)
     }
 }

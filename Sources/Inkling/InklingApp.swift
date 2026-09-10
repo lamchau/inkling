@@ -1,14 +1,18 @@
+import AppKit
 import SwiftUI
 
 @main
 struct InklingApp: App {
+    @NSApplicationDelegateAdaptor(InklingAppDelegate.self) private var appDelegate
     @State private var settings: AppSettings
     @State private var session: DiffSession
 
     init() {
         let settings = AppSettings()
+        let session = DiffSession(settings: settings)
         _settings = State(initialValue: settings)
-        _session = State(initialValue: DiffSession(settings: settings))
+        _session = State(initialValue: session)
+        appDelegate.session = session
     }
 
     var body: some Scene {
@@ -36,32 +40,48 @@ struct InklingCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("Open Comparison…") {
+            Button(L10n.string("Open Comparison…")) {
                 session.chooseFiles()
             }
             .keyboardShortcut("o", modifiers: .command)
 
             Divider()
 
-            Button("Choose Left File…") {
+            Button(L10n.string("Choose Left File…")) {
                 session.chooseFile(for: .left)
             }
 
-            Button("Choose Right File…") {
+            Button(L10n.string("Choose Right File…")) {
                 session.chooseFile(for: .right)
             }
         }
 
         CommandGroup(replacing: .saveItem) {
-            Button("Save Both") {
-                session.saveBoth()
+            Button(L10n.string("Save")) {
+                session.saveFocusedSide()
             }
             .keyboardShortcut("s", modifiers: .command)
+            .disabled(!session.canSaveFocusedSide)
+
+            Button(L10n.string("Save Left")) {
+                session.save(.left)
+            }
+            .disabled(!session.leftIsDirty)
+
+            Button(L10n.string("Save Right")) {
+                session.save(.right)
+            }
+            .disabled(!session.rightIsDirty)
+
+            Button(L10n.string("Save Both")) {
+                session.saveBoth()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
             .disabled(!session.canSave)
         }
 
-        CommandMenu("Compare") {
-            Button("Previous Change") {
+        CommandMenu(L10n.string("Compare")) {
+            Button(L10n.string("Previous Change")) {
                 session.previousChange()
             }
             .keyboardShortcut(
@@ -70,7 +90,7 @@ struct InklingCommands: Commands {
             )
             .disabled(session.result.changes.isEmpty)
 
-            Button("Next Change") {
+            Button(L10n.string("Next Change")) {
                 session.nextChange()
             }
             .keyboardShortcut(
@@ -81,30 +101,39 @@ struct InklingCommands: Commands {
 
             Divider()
 
-            Button("Copy Left to Right") {
-                session.applyCurrentHunk(from: .left)
+            Button(session.copyBlockActionTitle(from: .left)) {
+                session.copyCurrentBlock(from: .left)
             }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
             .disabled(session.currentHunk == nil)
 
-            Button("Copy Right to Left") {
-                session.applyCurrentHunk(from: .right)
+            Button(session.copyBlockActionTitle(from: .right)) {
+                session.copyCurrentBlock(from: .right)
             }
             .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
             .disabled(session.currentHunk == nil)
 
             Divider()
 
-            Toggle("Ignore Whitespace", isOn: Binding(
+            Toggle(L10n.string("Ignore Whitespace"), isOn: Binding(
                 get: { session.ignoreWhitespace },
                 set: { session.ignoreWhitespace = $0 }
             ))
             .keyboardShortcut("w", modifiers: [.command, .option])
 
-            Button("Swap Sides") {
+            Button(L10n.string("Swap Sides")) {
                 session.swapSides()
             }
             .keyboardShortcut("s", modifiers: [.command, .option])
         }
+    }
+}
+
+@MainActor
+final class InklingAppDelegate: NSObject, NSApplicationDelegate {
+    weak var session: DiffSession?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        session?.requestWindowClose() == false ? .terminateCancel : .terminateNow
     }
 }

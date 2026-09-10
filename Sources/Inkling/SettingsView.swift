@@ -8,7 +8,7 @@ struct SettingsView: View {
 
         TabView {
             Form {
-                Picker("Diff algorithm", selection: $settings.algorithm) {
+                Picker(L10n.string("Diff algorithm"), selection: $settings.algorithm) {
                     ForEach(DiffAlgorithm.allCases) { algorithm in
                         Text(algorithm.title).tag(algorithm)
                     }
@@ -17,13 +17,13 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Picker("Highlight colors", selection: $settings.highlightStyle) {
+                Picker(L10n.string("Highlight colors"), selection: $settings.highlightStyle) {
                     ForEach(HighlightStyle.allCases) { style in
                         Text(style.title).tag(style)
                     }
                 }
 
-                Picker("Change navigation", selection: $settings.shortcuts) {
+                Picker(L10n.string("Change navigation"), selection: $settings.shortcuts) {
                     ForEach(ShortcutPreset.allCases) { shortcut in
                         Text(shortcut.title).tag(shortcut)
                     }
@@ -31,20 +31,24 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .tabItem {
-                Label("Diff", systemImage: "arrow.left.arrow.right")
+                Label(L10n.string("Diff"), systemImage: "arrow.left.arrow.right")
             }
 
             Form {
-                Toggle("Show line numbers", isOn: $settings.showLineNumbers)
-                Toggle("Synchronize scrolling", isOn: $settings.syncScrolling)
-                Toggle("Synchronize caret position", isOn: $settings.syncCaret)
-                Text("Caret synchronization follows the same logical line and column.")
+                Toggle(L10n.string("Show line numbers"), isOn: $settings.showLineNumbers)
+                Toggle(L10n.string("Synchronize scrolling"), isOn: $settings.syncScrolling)
+                Toggle(L10n.string("Synchronize caret position"), isOn: $settings.syncCaret)
+                Text(
+                    L10n.string(
+                        "Caret synchronization follows the same logical line and column."
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .formStyle(.grouped)
             .tabItem {
-                Label("Editor", systemImage: "text.cursor")
+                Label(L10n.string("Editor"), systemImage: "text.cursor")
             }
         }
         .padding(12)

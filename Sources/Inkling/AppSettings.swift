@@ -12,19 +12,23 @@ enum DiffAlgorithm: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .semantic: "Semantic"
-        case .word: "Word"
-        case .character: "Character"
-        case .line: "Line"
+        case .semantic: L10n.string("Semantic")
+        case .word: L10n.string("Word")
+        case .character: L10n.string("Character")
+        case .line: L10n.string("Line")
         }
     }
 
     var detail: String {
         switch self {
-        case .semantic: "Stable word anchors, phrase blocks, and exact character edits"
-        case .word: "Whole changed words and punctuation"
-        case .character: "Smallest character-level differences"
-        case .line: "Complete changed lines"
+        case .semantic:
+            L10n.string("Stable word anchors, phrase blocks, and exact character edits")
+        case .word:
+            L10n.string("Whole changed words and punctuation")
+        case .character:
+            L10n.string("Smallest character-level differences")
+        case .line:
+            L10n.string("Complete changed lines")
         }
     }
 }
@@ -37,8 +41,8 @@ enum HighlightStyle: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .foreground: "Foreground"
-        case .background: "Background"
+        case .foreground: L10n.string("Foreground")
+        case .background: L10n.string("Background")
         }
     }
 }

@@ -109,6 +109,8 @@ struct DiffTextView: NSViewRepresentable {
     @Binding var sharedCaret: CaretPosition?
     @Binding var isDropTargeted: Bool
     let onDrop: ([URL]) -> Bool
+    let onEditorChange: (NSTextView?) -> Void
+    let onFocus: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -142,7 +144,8 @@ struct DiffTextView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
-        textView.string = text
+        context.coordinator.textView = textView
+        Self.replaceTextWithoutUndo(text, in: textView)
         let gutterView = LineNumberGutterView(
             scrollView: scrollView,
             textView: textView
@@ -151,10 +154,11 @@ struct DiffTextView: NSViewRepresentable {
             scrollView: scrollView,
             gutterView: gutterView
         )
-        context.coordinator.textView = textView
         context.coordinator.scrollView = scrollView
         context.coordinator.gutterView = gutterView
         context.coordinator.observeScroll()
+        context.coordinator.observeTextStorage()
+        onEditorChange(textView)
         configureDropTarget(containerView, context: context)
         updateLineNumbers(containerView)
         Self.applyHighlights(highlights, style: highlightStyle, to: textView)
@@ -169,7 +173,7 @@ struct DiffTextView: NSViewRepresentable {
         if textView.string != text {
             let selectedRanges = textView.selectedRanges
             context.coordinator.isApplyingUpdate = true
-            textView.string = text
+            Self.replaceTextWithoutUndo(text, in: textView)
             textView.selectedRanges = selectedRanges.filter {
                 NSMaxRange($0.rangeValue) <= text.utf16.count
             }
@@ -224,6 +228,7 @@ struct DiffTextView: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: DiffEditorContainerView, coordinator: Coordinator) {
         NotificationCenter.default.removeObserver(coordinator)
+        coordinator.parent.onEditorChange(nil)
     }
 
     static func applyHighlights(
@@ -294,6 +299,18 @@ struct DiffTextView: NSViewRepresentable {
             }
         }
         textView.needsDisplay = true
+    }
+
+    static func replaceTextWithoutUndo(_ text: String, in textView: NSTextView) {
+        let undoManager = textView.undoManager
+        let undoWasEnabled = undoManager?.isUndoRegistrationEnabled == true
+        if undoWasEnabled {
+            undoManager?.disableUndoRegistration()
+        }
+        textView.string = text
+        if undoWasEnabled {
+            undoManager?.enableUndoRegistration()
+        }
     }
 
     private static func highlightPriority(_ kind: HighlightKind) -> Int {
@@ -399,6 +416,16 @@ struct DiffTextView: NSViewRepresentable {
             )
         }
 
+        func observeTextStorage() {
+            guard let textStorage = textView?.textStorage else { return }
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(storageEditingProcessed),
+                name: NSTextStorage.didProcessEditingNotification,
+                object: textStorage
+            )
+        }
+
         @objc private func scrollDidChange() {
             guard !isApplyingScroll, let scrollView else { return }
             isPublishingScroll = true
@@ -410,13 +437,22 @@ struct DiffTextView: NSViewRepresentable {
             isPublishingScroll = false
         }
 
+        @objc private func storageEditingProcessed(_ notification: Notification) {
+            guard !isApplyingUpdate,
+                  let textStorage = notification.object as? NSTextStorage,
+                  textStorage.editedMask.contains(.editedCharacters)
+            else {
+                return
+            }
+            publishTextChange()
+        }
+
         func textDidChange(_ notification: Notification) {
-            guard !isApplyingUpdate, let textView else { return }
-            parent.text = textView.string
-            gutterView?.refresh()
+            publishTextChange()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
+            parent.onFocus()
             guard parent.syncCaret, !isApplyingCaret, let textView else { return }
             let location = textView.selectedRange().location
             let nsText = textView.string as NSString
@@ -432,6 +468,21 @@ struct DiffTextView: NSViewRepresentable {
                 column: location - lineRange.location,
                 source: side
             )
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            parent.onFocus()
+        }
+
+        private func publishTextChange() {
+            guard !isApplyingUpdate,
+                  let textView,
+                  parent.text != textView.string
+            else {
+                return
+            }
+            parent.text = textView.string
+            gutterView?.refresh()
         }
     }
 }

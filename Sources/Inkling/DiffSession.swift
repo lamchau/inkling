@@ -5,21 +5,71 @@ import Observation
 @MainActor
 @Observable
 final class DiffSession {
-    private let files = TextFileService()
+    enum UnsavedChangesDecision {
+        case save
+        case discard
+        case cancel
+    }
+
+    enum UnsavedChangesReason {
+        case replacing(DiffSide?)
+        case closing
+    }
+
+    struct SaveOutcome: Equatable {
+        let saved: [DiffSide]
+        let failed: [DiffSide]
+
+        var succeeded: Bool {
+            failed.isEmpty
+        }
+    }
+
+    typealias LoadFile = (URL) throws -> LoadedTextFile
+    typealias SaveFile = (String, URL) throws -> Void
+    typealias DecisionProvider = @MainActor (
+        [DiffSide],
+        UnsavedChangesReason
+    ) -> UnsavedChangesDecision
+
+    private let loadFile: LoadFile
+    private let saveFile: SaveFile
+    private let decisionProvider: DecisionProvider
     private var refreshTask: Task<Void, Never>?
+    private var refreshRevision = 0
+    private weak var leftEditor: NSTextView?
+    private weak var rightEditor: NSTextView?
     let settings: AppSettings
 
-    init(settings: AppSettings = AppSettings()) {
+    init(
+        settings: AppSettings = AppSettings(),
+        loadFile: @escaping LoadFile = { try TextFileService().load($0) },
+        saveFile: @escaping SaveFile = { try TextFileService().save($0, to: $1) },
+        decisionProvider: @escaping DecisionProvider = DiffSession.presentUnsavedChangesAlert
+    ) {
         self.settings = settings
+        self.loadFile = loadFile
+        self.saveFile = saveFile
+        self.decisionProvider = decisionProvider
     }
 
     var leftURL: URL?
     var rightURL: URL?
+    private var leftSavedText = ""
+    private var rightSavedText = ""
     var leftText = "" {
-        didSet { scheduleRefresh() }
+        didSet {
+            guard leftText != oldValue else { return }
+            documentRevision += 1
+            scheduleRefresh()
+        }
     }
     var rightText = "" {
-        didSet { scheduleRefresh() }
+        didSet {
+            guard rightText != oldValue else { return }
+            documentRevision += 1
+            scheduleRefresh()
+        }
     }
     var ignoreWhitespace = false {
         didSet { scheduleRefresh() }
@@ -29,15 +79,29 @@ final class DiffSession {
     var leftNavigationOffset = 0
     var rightNavigationOffset = 0
     var navigationRevision = 0
+    private(set) var documentRevision = 0
+    var focusedSide: DiffSide?
     var errorMessage: String?
-    var statusMessage = "Choose two text files to begin."
+    var statusMessage = L10n.string("Choose 2 text files to begin.")
 
     var canSave: Bool {
-        leftURL != nil || rightURL != nil
+        isDirty(.left) || isDirty(.right)
+    }
+
+    var canSaveFocusedSide: Bool {
+        focusedSide.map(isDirty) ?? false
     }
 
     var hasBothFiles: Bool {
         leftURL != nil && rightURL != nil
+    }
+
+    var leftIsDirty: Bool {
+        isDirty(.left)
+    }
+
+    var rightIsDirty: Bool {
+        isDirty(.right)
     }
 
     var currentChange: DiffChange? {
@@ -60,8 +124,10 @@ final class DiffSession {
 
     func chooseFile(for side: DiffSide) {
         let panel = NSOpenPanel()
-        panel.title = side == .left ? "Choose Left File" : "Choose Right File"
-        panel.prompt = "Choose"
+        panel.title = side == .left
+            ? L10n.string("Choose Left File")
+            : L10n.string("Choose Right File")
+        panel.prompt = L10n.string("Choose")
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -70,9 +136,9 @@ final class DiffSession {
 
     func chooseFiles() {
         let panel = NSOpenPanel()
-        panel.title = "Choose Two Files to Compare"
-        panel.message = "Select exactly two text files."
-        panel.prompt = "Compare"
+        panel.title = L10n.string("Choose 2 Files to Compare")
+        panel.message = L10n.string("Select exactly 2 text files.")
+        panel.prompt = L10n.string("Compare")
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
@@ -99,20 +165,26 @@ final class DiffSession {
 
     func load(_ url: URL, for side: DiffSide) {
         do {
-            let loaded = try files.load(url)
+            let loaded = try loadFile(url)
             let otherURL = side == .left ? rightURL : leftURL
             guard loaded.url != otherURL else {
                 throw InklingError.sameFile
+            }
+            guard confirmReplacement(of: [side], reason: .replacing(side)) else {
+                return
             }
             switch side {
             case .left:
                 leftURL = loaded.url
                 leftText = loaded.text
+                leftSavedText = loaded.text
             case .right:
                 rightURL = loaded.url
                 rightText = loaded.text
+                rightSavedText = loaded.text
             }
-            statusMessage = "Loaded \(loaded.url.lastPathComponent)."
+            clearUndoHistory(for: side)
+            statusMessage = L10n.string("Loaded \(loaded.url.lastPathComponent).")
         } catch {
             present(error)
         }
@@ -124,32 +196,63 @@ final class DiffSession {
             return
         }
         do {
-            let left = try files.load(urls[0])
-            let right = try files.load(urls[1])
+            let left = try loadFile(urls[0])
+            let right = try loadFile(urls[1])
             guard left.url != right.url else {
                 throw InklingError.sameFile
+            }
+            guard confirmReplacement(
+                of: [.left, .right],
+                reason: .replacing(nil)
+            ) else {
+                return
             }
             leftURL = left.url
             rightURL = right.url
             leftText = left.text
             rightText = right.text
-            statusMessage = "Comparing \(left.url.lastPathComponent) and \(right.url.lastPathComponent)."
+            leftSavedText = left.text
+            rightSavedText = right.text
+            clearUndoHistory(for: .left)
+            clearUndoHistory(for: .right)
+            statusMessage = L10n.string(
+                "Comparing \(left.url.lastPathComponent) and \(right.url.lastPathComponent)."
+            )
         } catch {
             present(error)
         }
     }
 
-    func saveBoth() {
-        do {
-            if let leftURL {
-                try files.save(leftText, to: leftURL)
-            }
-            if let rightURL {
-                try files.save(rightText, to: rightURL)
-            }
-            statusMessage = "Saved."
-        } catch {
-            present(error)
+    @discardableResult
+    func saveFocusedSide() -> SaveOutcome {
+        guard let focusedSide else {
+            statusMessage = L10n.string("Choose an editor before saving.")
+            return SaveOutcome(saved: [], failed: [])
+        }
+        return save(focusedSide)
+    }
+
+    @discardableResult
+    func save(_ side: DiffSide) -> SaveOutcome {
+        save([side])
+    }
+
+    @discardableResult
+    func saveBoth() -> SaveOutcome {
+        save([.left, .right])
+    }
+
+    func requestWindowClose() -> Bool {
+        let dirtySides = dirtySides(in: [.left, .right])
+        guard !dirtySides.isEmpty else { return true }
+
+        switch decisionProvider(dirtySides, .closing) {
+        case .save:
+            return save(dirtySides).succeeded
+        case .discard:
+            return true
+        case .cancel:
+            return false
         }
     }
 
@@ -161,32 +264,115 @@ final class DiffSession {
         navigate(by: -1)
     }
 
-    func applyCurrentHunk(from source: DiffSide) {
-        guard let hunk = currentHunk else { return }
-        var leftLines = leftText.components(separatedBy: "\n")
-        var rightLines = rightText.components(separatedBy: "\n")
-        switch source {
+    func registerEditor(_ editor: NSTextView?, for side: DiffSide) {
+        switch side {
         case .left:
-            rightLines.replaceSubrange(hunk.rightRange, with: leftLines[hunk.leftRange])
-            rightText = rightLines.joined(separator: "\n")
-            statusMessage = "Copied change from left to right."
+            leftEditor = editor
         case .right:
-            leftLines.replaceSubrange(hunk.leftRange, with: rightLines[hunk.rightRange])
-            leftText = leftLines.joined(separator: "\n")
-            statusMessage = "Copied change from right to left."
+            rightEditor = editor
         }
+        editor?.undoManager?.removeAllActions()
+    }
+
+    func copyBlockActionTitle(from source: DiffSide) -> String {
+        let destination = opposite(of: source)
+        let direction = source == .left
+            ? L10n.string("Left to Right")
+            : L10n.string("Right to Left")
+        guard let filename = url(for: destination)?.lastPathComponent else {
+            return L10n.string("Copy Block \(direction)")
+        }
+        return L10n.string("Copy Block \(direction) — \(filename)")
+    }
+
+    func copyBlockHelp(from source: DiffSide) -> String {
+        L10n.string("Copy Block \(copyBlockRoute(from: source))")
+    }
+
+    func copyCurrentBlock(from source: DiffSide) {
+        let route = copyBlockRoute(from: source)
+        guard result.documentRevision == documentRevision else {
+            statusMessage = L10n.string(
+                "Copy Block skipped: \(route); comparison is out of date."
+            )
+            present(InklingError.staleDiff)
+            return
+        }
+        guard let hunk = currentHunk else { return }
+        let destination = opposite(of: source)
+        let sourceText = text(for: source)
+        let targetText = text(for: destination)
+        let sourceRange = source == .left ? hunk.leftRange : hunk.rightRange
+        let targetRange = source == .left ? hunk.rightRange : hunk.leftRange
+        guard let replacement = Self.replacement(
+            sourceText: sourceText,
+            sourceLineRange: sourceRange,
+            targetText: targetText,
+            targetLineRange: targetRange
+        ) else {
+            statusMessage = L10n.string(
+                "Copy Block skipped: \(route); source or destination range is invalid."
+            )
+            return
+        }
+        guard let sourceEditor = editor(for: source),
+              let targetEditor = editor(for: destination),
+              sourceEditor.string == sourceText,
+              targetEditor.string == targetText,
+              let textStorage = targetEditor.textStorage,
+              NSMaxRange(replacement.range) <= textStorage.length
+        else {
+            statusMessage = L10n.string(
+                "Copy Block skipped: \(route); an editor is out of date."
+            )
+            return
+        }
+        guard replacement.result != targetText else {
+            statusMessage = L10n.string("Copy Block made no changes: \(route).")
+            return
+        }
+        guard let undoManager = targetEditor.undoManager else {
+            statusMessage = L10n.string(
+                "Copy Block skipped: \(route); undo is unavailable."
+            )
+            return
+        }
+        guard targetEditor.shouldChangeText(
+            in: replacement.range,
+            replacementString: replacement.text
+        ) else {
+            statusMessage = L10n.string("Copy Block was not allowed: \(route).")
+            return
+        }
+        targetEditor.breakUndoCoalescing()
+        targetEditor.breakUndoCoalescing()
+        undoManager.beginUndoGrouping()
+        textStorage.replaceCharacters(in: replacement.range, with: replacement.text)
+        targetEditor.didChangeText()
+        if text(for: destination) != targetEditor.string {
+            setText(targetEditor.string, for: destination)
+        }
+        undoManager.setActionName(L10n.string("Copy Block"))
+        undoManager.endUndoGrouping()
+        targetEditor.breakUndoCoalescing()
+
+        statusMessage = L10n.string("Copy Block completed: \(route).")
     }
 
     func swapSides() {
         swap(&leftURL, &rightURL)
         swap(&leftText, &rightText)
+        swap(&leftSavedText, &rightSavedText)
         currentChangeIndex = nil
-        statusMessage = "Swapped sides."
+        statusMessage = L10n.string("Swapped sides.")
         refreshImmediately()
     }
 
     func refreshImmediately() {
         refreshTask?.cancel()
+        refreshRevision += 1
+        let refreshRevision = refreshRevision
+        let documentRevision = documentRevision
         let leftText = leftText
         let rightText = rightText
         let ignoreWhitespace = ignoreWhitespace
@@ -201,24 +387,32 @@ final class DiffSession {
                 )
             }.value
             guard !Task.isCancelled else { return }
-            result = computed
+            guard refreshRevision == self.refreshRevision,
+                  documentRevision == self.documentRevision
+            else {
+                return
+            }
+            result = computed.stamped(with: documentRevision)
             reconcileNavigation()
         }
     }
 
     private func scheduleRefresh() {
         refreshTask?.cancel()
+        refreshRevision += 1
+        let refreshRevision = refreshRevision
+        let documentRevision = documentRevision
         guard hasBothFiles else {
-            result = .empty
+            result = .empty.stamped(with: documentRevision)
             return
         }
+        let leftText = leftText
+        let rightText = rightText
+        let ignoreWhitespace = ignoreWhitespace
+        let algorithm = settings.algorithm
         refreshTask = Task {
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
-            let leftText = leftText
-            let rightText = rightText
-            let ignoreWhitespace = ignoreWhitespace
-            let algorithm = settings.algorithm
             let computed = await Task.detached(priority: .userInitiated) {
                 DiffEngine.compare(
                     left: leftText,
@@ -228,7 +422,12 @@ final class DiffSession {
                 )
             }.value
             guard !Task.isCancelled else { return }
-            result = computed
+            guard refreshRevision == self.refreshRevision,
+                  documentRevision == self.documentRevision
+            else {
+                return
+            }
+            result = computed.stamped(with: documentRevision)
             reconcileNavigation()
         }
     }
@@ -243,7 +442,7 @@ final class DiffSession {
     private func reconcileNavigation() {
         if result.changes.isEmpty {
             currentChangeIndex = nil
-            statusMessage = "Files are identical."
+            statusMessage = L10n.string("Files are identical.")
         } else {
             if let currentChangeIndex {
                 self.currentChangeIndex = min(
@@ -252,8 +451,9 @@ final class DiffSession {
                 )
             }
             let count = result.changes.count
-            statusMessage = "\(count) change\(count == 1 ? "" : "s")."
-            revealCurrentChange()
+            statusMessage = count == 1
+                ? L10n.string("1 change.")
+                : L10n.string("\(count) changes.")
         }
     }
 
@@ -264,7 +464,248 @@ final class DiffSession {
         navigationRevision += 1
     }
 
+    private func isDirty(_ side: DiffSide) -> Bool {
+        switch side {
+        case .left:
+            leftURL != nil && leftText != leftSavedText
+        case .right:
+            rightURL != nil && rightText != rightSavedText
+        }
+    }
+
+    private func dirtySides(in sides: [DiffSide]) -> [DiffSide] {
+        sides.filter(isDirty)
+    }
+
+    private func confirmReplacement(
+        of sides: [DiffSide],
+        reason: UnsavedChangesReason
+    ) -> Bool {
+        let dirtySides = dirtySides(in: sides)
+        guard !dirtySides.isEmpty else { return true }
+
+        switch decisionProvider(dirtySides, reason) {
+        case .save:
+            return save(dirtySides).succeeded
+        case .discard:
+            return true
+        case .cancel:
+            return false
+        }
+    }
+
+    private func save(_ sides: [DiffSide]) -> SaveOutcome {
+        let dirtySides = dirtySides(in: sides)
+        guard !dirtySides.isEmpty else {
+            statusMessage = L10n.string("No changes to save.")
+            return SaveOutcome(saved: [], failed: [])
+        }
+
+        var saved: [DiffSide] = []
+        var failed: [DiffSide] = []
+        var errors: [String] = []
+        errorMessage = nil
+        for side in dirtySides {
+            guard let url = url(for: side) else { continue }
+            do {
+                let text = text(for: side)
+                try saveFile(text, url)
+                setSavedText(text, for: side)
+                saved.append(side)
+            } catch {
+                failed.append(side)
+                errors.append(error.localizedDescription)
+            }
+        }
+
+        let outcome = SaveOutcome(saved: saved, failed: failed)
+        updateSaveStatus(outcome)
+        if !errors.isEmpty {
+            errorMessage = errors.joined(separator: "\n")
+        }
+        return outcome
+    }
+
+    private func url(for side: DiffSide) -> URL? {
+        side == .left ? leftURL : rightURL
+    }
+
+    private func text(for side: DiffSide) -> String {
+        side == .left ? leftText : rightText
+    }
+
+    private func editor(for side: DiffSide) -> NSTextView? {
+        side == .left ? leftEditor : rightEditor
+    }
+
+    private func opposite(of side: DiffSide) -> DiffSide {
+        side == .left ? .right : .left
+    }
+
+    private func copyBlockRoute(from source: DiffSide) -> String {
+        let destination = opposite(of: source)
+        let direction = source == .left
+            ? L10n.string("left → right")
+            : L10n.string("right → left")
+        guard let filename = url(for: destination)?.lastPathComponent else {
+            return direction
+        }
+        return L10n.string("\(direction) into \(filename)")
+    }
+
+    private func setText(_ text: String, for side: DiffSide) {
+        switch side {
+        case .left:
+            leftText = text
+        case .right:
+            rightText = text
+        }
+    }
+
+    private func clearUndoHistory(for side: DiffSide) {
+        editor(for: side)?.undoManager?.removeAllActions()
+    }
+
+    private struct TextReplacement {
+        let range: NSRange
+        let text: String
+        let result: String
+    }
+
+    private static func replacement(
+        sourceText: String,
+        sourceLineRange: Range<Int>,
+        targetText: String,
+        targetLineRange: Range<Int>
+    ) -> TextReplacement? {
+        let sourceLines = sourceText.components(separatedBy: "\n")
+        let targetLines = targetText.components(separatedBy: "\n")
+        guard sourceLineRange.lowerBound >= 0,
+              sourceLineRange.upperBound <= sourceLines.count,
+              targetLineRange.lowerBound >= 0,
+              targetLineRange.upperBound <= targetLines.count
+        else {
+            return nil
+        }
+
+        var resultLines = targetLines
+        resultLines.replaceSubrange(
+            targetLineRange,
+            with: sourceLines[sourceLineRange]
+        )
+        let result = resultLines.joined(separator: "\n")
+        let old = targetText as NSString
+        let new = result as NSString
+        var prefixLength = 0
+        while prefixLength < old.length,
+              prefixLength < new.length,
+              old.character(at: prefixLength) == new.character(at: prefixLength)
+        {
+            prefixLength += 1
+        }
+        var suffixLength = 0
+        while suffixLength < old.length - prefixLength,
+              suffixLength < new.length - prefixLength,
+              old.character(at: old.length - suffixLength - 1)
+                == new.character(at: new.length - suffixLength - 1)
+        {
+            suffixLength += 1
+        }
+        let range = NSRange(
+            location: prefixLength,
+            length: old.length - prefixLength - suffixLength
+        )
+        let replacementRange = NSRange(
+            location: prefixLength,
+            length: new.length - prefixLength - suffixLength
+        )
+        guard NSMaxRange(range) <= old.length,
+              NSMaxRange(replacementRange) <= new.length
+        else {
+            return nil
+        }
+        let replacementText = new.substring(with: replacementRange)
+        guard old.replacingCharacters(in: range, with: replacementText) == result else {
+            return nil
+        }
+        return TextReplacement(range: range, text: replacementText, result: result)
+    }
+
+    private func setSavedText(_ text: String, for side: DiffSide) {
+        switch side {
+        case .left:
+            leftSavedText = text
+        case .right:
+            rightSavedText = text
+        }
+    }
+
+    private func updateSaveStatus(_ outcome: SaveOutcome) {
+        let savedNames = sideNames(outcome.saved)
+        let failedNames = sideNames(outcome.failed)
+        if failedNames.isEmpty {
+            statusMessage = L10n.string("Saved \(savedNames).")
+        } else if savedNames.isEmpty {
+            statusMessage = L10n.string("Could not save \(failedNames).")
+        } else {
+            statusMessage = L10n.string(
+                "Saved \(savedNames); could not save \(failedNames)."
+            )
+        }
+    }
+
+    private func sideNames(_ sides: [DiffSide]) -> String {
+        let names = [DiffSide.left, .right]
+            .filter(sides.contains)
+            .map {
+                $0 == .left ? L10n.string("left") : L10n.string("right")
+            }
+        return names.joined(separator: L10n.string(" and "))
+    }
+
     private func present(_ error: Error) {
         errorMessage = error.localizedDescription
+    }
+
+    private static func presentUnsavedChangesAlert(
+        sides: [DiffSide],
+        reason: UnsavedChangesReason
+    ) -> UnsavedChangesDecision {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch reason {
+        case let .replacing(side):
+            if let side {
+                let sideName = side == .left
+                    ? L10n.string("left")
+                    : L10n.string("right")
+                alert.messageText = L10n.string(
+                    "Save changes to the \(sideName) file?"
+                )
+            } else {
+                alert.messageText = L10n.string(
+                    "Save changes before replacing both files?"
+                )
+            }
+            alert.informativeText = L10n.string(
+                "Unsaved changes will be lost if you discard them."
+            )
+        case .closing:
+            alert.messageText = L10n.string("Save changes before closing?")
+            alert.informativeText = L10n.string(
+                "Unsaved changes will be lost if you discard them."
+            )
+        }
+        alert.addButton(withTitle: L10n.string("Save"))
+        alert.addButton(withTitle: L10n.string("Cancel"))
+        alert.addButton(withTitle: L10n.string("Discard"))
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertThirdButtonReturn:
+            return .discard
+        default:
+            return .cancel
+        }
     }
 }
