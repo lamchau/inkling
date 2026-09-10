@@ -47,11 +47,19 @@ struct InklingCommands: Commands {
 
             Divider()
 
-            Button(L10n.string("Choose Left File…")) {
+            Button(
+                settings.comparisonLayout == .sideBySide
+                    ? L10n.string("Choose Left File…")
+                    : L10n.string("Choose Top File…")
+            ) {
                 session.chooseFile(for: .left)
             }
 
-            Button(L10n.string("Choose Right File…")) {
+            Button(
+                settings.comparisonLayout == .sideBySide
+                    ? L10n.string("Choose Right File…")
+                    : L10n.string("Choose Bottom File…")
+            ) {
                 session.chooseFile(for: .right)
             }
         }
@@ -63,12 +71,20 @@ struct InklingCommands: Commands {
             .keyboardShortcut("s", modifiers: .command)
             .disabled(!session.canSaveFocusedSide)
 
-            Button(L10n.string("Save Left")) {
+            Button(
+                settings.comparisonLayout == .sideBySide
+                    ? L10n.string("Save Left")
+                    : L10n.string("Save Top")
+            ) {
                 session.save(.left)
             }
             .disabled(!session.leftIsDirty)
 
-            Button(L10n.string("Save Right")) {
+            Button(
+                settings.comparisonLayout == .sideBySide
+                    ? L10n.string("Save Right")
+                    : L10n.string("Save Bottom")
+            ) {
                 session.save(.right)
             }
             .disabled(!session.rightIsDirty)

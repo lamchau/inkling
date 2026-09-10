@@ -53,6 +53,7 @@ flowchart LR
 | Word diff | Emphasizes changed words and punctuation without character detail |
 | Character diff | Shows the smallest differing extended grapheme clusters |
 | Line diff | Presents complete changed lines when structural review matters most |
+| Comparison layout | Switches between equal side-by-side and top-and-bottom editors |
 | Ignore whitespace | Removes whitespace from matching decisions for the current comparison |
 | Semantic navigation | Counts and visits meaningful changes independently of line hunks |
 | Current-change emphasis | Centers, flashes, and underlines the active change without replacing selection |
@@ -102,9 +103,10 @@ Run `just` with no arguments to list every recipe.
 
 ## Using Inkling
 
-1. Drop one file onto each side, choose each side independently, or press
+1. Drop one file onto each pane, choose each pane independently, or press
    **Command-O** to select 2 files.
-2. Choose the comparison mode that best matches the review.
+2. Choose side-by-side or top-and-bottom layout from the header, then select the
+   comparison mode that best matches the review.
 3. Move through changes from the center rail or with the configured navigation
    shortcuts.
 4. Edit either pane directly. Use the center arrows to copy the current block
@@ -124,7 +126,9 @@ Run `just` with no arguments to list every recipe.
 | Toggle ignored whitespace | `Command-Option-W` |
 | Swap sides | `Command-Option-S` |
 
-Navigation shortcuts can be changed in Settings.
+Navigation shortcuts and the default comparison layout can be changed in
+Settings. Switching layouts preserves the open files, edits, dirty state, and
+current comparison.
 
 ## File Safety and Supported Text
 

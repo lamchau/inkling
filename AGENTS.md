@@ -52,8 +52,10 @@ Requirements are macOS 14+, Xcode 16+, Swift 6, and `just`.
 
 ## Invariants
 
-- Keep both editor panes exactly equal in width. Preserve the `HSplitView`
-  architecture; replacing it with an `HStack` has broken editor rendering.
+- Keep editor panes exactly equal in width side by side and equal in height
+  when stacked. Preserve `HSplitView` for horizontal layout and `VSplitView`
+  for vertical layout; replacing the horizontal split with an `HStack` has
+  broken editor rendering.
 - Keep line-number gutters independent from the text view so they cannot cover
   leading glyphs.
 - `DiffChange` is the semantic navigation/counting unit. `DiffHunk` is the

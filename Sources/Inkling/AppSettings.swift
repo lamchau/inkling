@@ -47,6 +47,27 @@ enum HighlightStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum ComparisonLayout: String, CaseIterable, Identifiable, Sendable {
+    case sideBySide
+    case topAndBottom
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .sideBySide: L10n.string("Side by Side")
+        case .topAndBottom: L10n.string("Top and Bottom")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .sideBySide: "rectangle.split.2x1"
+        case .topAndBottom: "rectangle.split.1x2"
+        }
+    }
+}
+
 struct PaletteColor: Codable, Equatable, Sendable {
     let red: Double
     let green: Double
@@ -162,6 +183,7 @@ final class AppSettings {
         static let shortcuts = "navigationShortcuts"
         static let highlightStyle = "highlightStyle"
         static let palette = "diffPalette"
+        static let comparisonLayout = "comparisonLayout"
     }
 
     var algorithm: DiffAlgorithm {
@@ -187,6 +209,9 @@ final class AppSettings {
             defaults.set(try? JSONEncoder().encode(palette), forKey: Key.palette)
         }
     }
+    var comparisonLayout: ComparisonLayout {
+        didSet { defaults.set(comparisonLayout.rawValue, forKey: Key.comparisonLayout) }
+    }
 
     private let defaults: UserDefaults
 
@@ -207,6 +232,9 @@ final class AppSettings {
         palette = defaults.data(forKey: Key.palette)
             .flatMap { try? JSONDecoder().decode(DiffPalette.self, from: $0) }
             ?? .default
+        comparisonLayout = ComparisonLayout(
+            rawValue: defaults.string(forKey: Key.comparisonLayout) ?? ""
+        ) ?? .sideBySide
     }
 
     func color(for category: ChangeCategory) -> NSColor {

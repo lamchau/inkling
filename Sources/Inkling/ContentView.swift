@@ -2,11 +2,21 @@ import AppKit
 import SwiftUI
 
 enum EditorLayout {
-    static let railWidth: CGFloat = 52
+    static let railThickness: CGFloat = 52
+    static let railWidth = railThickness
+    static let railHeight = railThickness
     static let dividerWidth: CGFloat = 1
 
+    static func paneExtent(totalExtent: CGFloat) -> CGFloat {
+        max(0, (totalExtent - railThickness - dividerWidth * 2) / 2)
+    }
+
     static func paneWidth(totalWidth: CGFloat) -> CGFloat {
-        max(0, (totalWidth - railWidth - dividerWidth * 2) / 2)
+        paneExtent(totalExtent: totalWidth)
+    }
+
+    static func paneHeight(totalHeight: CGFloat) -> CGFloat {
+        paneExtent(totalExtent: totalHeight)
     }
 }
 
@@ -65,6 +75,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             paletteButton
+            layoutPicker
 
             fileButton(side: .right, url: session.rightURL)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -76,19 +87,52 @@ struct ContentView: View {
 
     private var editors: some View {
         GeometryReader { proxy in
-            let paneWidth = EditorLayout.paneWidth(totalWidth: proxy.size.width)
+            if settings.comparisonLayout == .sideBySide {
+                let paneWidth = EditorLayout.paneWidth(totalWidth: proxy.size.width)
 
-            HSplitView {
-                editor(for: .left)
-                    .frame(minWidth: paneWidth, idealWidth: paneWidth, maxWidth: paneWidth)
-                centerRail
-                    .frame(
-                        minWidth: EditorLayout.railWidth,
-                        idealWidth: EditorLayout.railWidth,
-                        maxWidth: EditorLayout.railWidth
-                    )
-                editor(for: .right)
-                    .frame(minWidth: paneWidth, idealWidth: paneWidth, maxWidth: paneWidth)
+                HSplitView {
+                    editor(for: .left)
+                        .frame(
+                            minWidth: paneWidth,
+                            idealWidth: paneWidth,
+                            maxWidth: paneWidth
+                        )
+                    centerRail
+                        .frame(
+                            minWidth: EditorLayout.railWidth,
+                            idealWidth: EditorLayout.railWidth,
+                            maxWidth: EditorLayout.railWidth
+                        )
+                    editor(for: .right)
+                        .frame(
+                            minWidth: paneWidth,
+                            idealWidth: paneWidth,
+                            maxWidth: paneWidth
+                        )
+                }
+            } else {
+                let paneHeight = EditorLayout.paneHeight(totalHeight: proxy.size.height)
+
+                VSplitView {
+                    editor(for: .left)
+                        .frame(
+                            minHeight: paneHeight,
+                            idealHeight: paneHeight,
+                            maxHeight: paneHeight
+                        )
+                    centerRail
+                        .frame(
+                            minHeight: EditorLayout.railHeight,
+                            idealHeight: EditorLayout.railHeight,
+                            maxHeight: EditorLayout.railHeight
+                        )
+                    editor(for: .right)
+                        .frame(
+                            minHeight: paneHeight,
+                            idealHeight: paneHeight,
+                            maxHeight: paneHeight
+                        )
+                }
             }
         }
     }
@@ -108,11 +152,11 @@ struct ContentView: View {
             )
             .foregroundStyle(.secondary)
 
-            HStack(spacing: 16) {
-                emptyDropWell(for: .left)
-                emptyDropWell(for: .right)
-            }
-            .frame(maxWidth: 760, maxHeight: 280)
+            emptyDropWells
+                .frame(
+                    maxWidth: 760,
+                    maxHeight: settings.comparisonLayout == .sideBySide ? 280 : 420
+                )
 
             Button(L10n.string("Choose 2 Files…")) {
                 session.chooseFiles()
@@ -131,7 +175,7 @@ struct ContentView: View {
                 .font(.system(size: 34))
                 .foregroundStyle(isTargeted ? Color.accentColor : .secondary)
 
-            Text(side == .left ? L10n.string("Left file") : L10n.string("Right file"))
+            Text(fileTitle(for: side))
                 .font(.headline)
 
             Text(url?.lastPathComponent ?? L10n.string("Choose or drop a file"))
@@ -179,9 +223,43 @@ struct ContentView: View {
             }
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            side == .left ? L10n.string("Left file") : L10n.string("Right file")
-        )
+        .accessibilityLabel(fileTitle(for: side))
+    }
+
+    @ViewBuilder
+    private var emptyDropWells: some View {
+        if settings.comparisonLayout == .sideBySide {
+            HStack(spacing: 16) {
+                emptyDropWell(for: .left)
+                emptyDropWell(for: .right)
+            }
+        } else {
+            VStack(spacing: 16) {
+                emptyDropWell(for: .left)
+                emptyDropWell(for: .right)
+            }
+        }
+    }
+
+    private var layoutPicker: some View {
+        Picker(
+            L10n.string("Comparison layout"),
+            selection: Binding(
+                get: { settings.comparisonLayout },
+                set: { settings.comparisonLayout = $0 }
+            )
+        ) {
+            ForEach(ComparisonLayout.allCases) { layout in
+                Label(layout.title, systemImage: layout.systemImage)
+                    .labelStyle(.iconOnly)
+                    .tag(layout)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 72)
+        .help(settings.comparisonLayout.title)
+        .accessibilityLabel(L10n.string("Comparison layout"))
     }
 
     private var paletteButton: some View {
@@ -261,7 +339,16 @@ struct ContentView: View {
         .background(.bar)
     }
 
+    @ViewBuilder
     private var centerRail: some View {
+        if settings.comparisonLayout == .sideBySide {
+            verticalCenterRail
+        } else {
+            horizontalCenterRail
+        }
+    }
+
+    private var verticalCenterRail: some View {
         VStack(spacing: 8) {
             Button {
                 session.previousChange()
@@ -320,6 +407,67 @@ struct ContentView: View {
         }
         .buttonStyle(.borderless)
         .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private var horizontalCenterRail: some View {
+        HStack(spacing: 8) {
+            Button {
+                session.previousChange()
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .help(
+                L10n.string(
+                    "Previous change (\(settings.shortcuts.title.components(separatedBy: " / ").first ?? ""))"
+                )
+            )
+            .disabled(session.result.changes.isEmpty)
+
+            Text(hunkLabel)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button {
+                session.nextChange()
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .help(
+                L10n.string(
+                    "Next change (\(settings.shortcuts.title.components(separatedBy: " / ").last ?? ""))"
+                )
+            )
+            .disabled(session.result.changes.isEmpty)
+
+            Divider()
+                .padding(.horizontal, 4)
+
+            Button {
+                session.copyCurrentBlock(from: .right)
+            } label: {
+                Image(systemName: "arrow.up")
+            }
+            .help(session.copyBlockHelp(from: .right))
+            .disabled(session.currentHunk == nil)
+
+            Button {
+                session.copyCurrentBlock(from: .left)
+            } label: {
+                Image(systemName: "arrow.down")
+            }
+            .help(session.copyBlockHelp(from: .left))
+            .disabled(session.currentHunk == nil)
+
+            Spacer()
+
+            SettingsLink {
+                Image(systemName: "gearshape")
+            }
+            .help(L10n.string("Settings"))
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
         .background(.bar)
     }
 
@@ -387,11 +535,7 @@ struct ContentView: View {
                     .transition(.opacity)
             }
         }
-        .accessibilityLabel(
-            side == .left
-                ? L10n.string("Left file editor")
-                : L10n.string("Right file editor")
-        )
+        .accessibilityLabel(editorTitle(for: side))
     }
 
     private func dropZone(for side: DiffSide) -> some View {
@@ -405,9 +549,7 @@ struct ContentView: View {
                 )
 
             Label(
-                side == .left
-                    ? L10n.string("Drop file on left")
-                    : L10n.string("Drop file on right"),
+                dropTitle(for: side),
                 systemImage: "arrow.down.doc"
             )
             .font(.title2.weight(.semibold))
@@ -441,11 +583,7 @@ struct ContentView: View {
                 Image(systemName: "doc.text")
                 Text(
                     url?.lastPathComponent
-                        ?? (
-                            side == .left
-                                ? L10n.string("Choose left file…")
-                                : L10n.string("Choose right file…")
-                        )
+                        ?? chooseFileTitle(for: side)
                 )
                     .lineLimit(1)
                 if (side == .left ? session.leftIsDirty : session.rightIsDirty) {
@@ -462,6 +600,58 @@ struct ContentView: View {
             guard urls.count == 1 else { return false }
             session.openDroppedFiles(urls, on: side)
             return true
+        }
+    }
+
+    private func fileTitle(for side: DiffSide) -> String {
+        switch (settings.comparisonLayout, side) {
+        case (.sideBySide, .left):
+            L10n.string("Left file")
+        case (.sideBySide, .right):
+            L10n.string("Right file")
+        case (.topAndBottom, .left):
+            L10n.string("Top file")
+        case (.topAndBottom, .right):
+            L10n.string("Bottom file")
+        }
+    }
+
+    private func chooseFileTitle(for side: DiffSide) -> String {
+        switch (settings.comparisonLayout, side) {
+        case (.sideBySide, .left):
+            L10n.string("Choose left file…")
+        case (.sideBySide, .right):
+            L10n.string("Choose right file…")
+        case (.topAndBottom, .left):
+            L10n.string("Choose top file…")
+        case (.topAndBottom, .right):
+            L10n.string("Choose bottom file…")
+        }
+    }
+
+    private func editorTitle(for side: DiffSide) -> String {
+        switch (settings.comparisonLayout, side) {
+        case (.sideBySide, .left):
+            L10n.string("Left file editor")
+        case (.sideBySide, .right):
+            L10n.string("Right file editor")
+        case (.topAndBottom, .left):
+            L10n.string("Top file editor")
+        case (.topAndBottom, .right):
+            L10n.string("Bottom file editor")
+        }
+    }
+
+    private func dropTitle(for side: DiffSide) -> String {
+        switch (settings.comparisonLayout, side) {
+        case (.sideBySide, .left):
+            L10n.string("Drop file on left")
+        case (.sideBySide, .right):
+            L10n.string("Drop file on right")
+        case (.topAndBottom, .left):
+            L10n.string("Drop file on top")
+        case (.topAndBottom, .right):
+            L10n.string("Drop file on bottom")
         }
     }
 

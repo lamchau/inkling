@@ -19,6 +19,7 @@ struct AppSettingsTests {
         settings.syncCaret = true
         settings.shortcuts = .optionJK
         settings.highlightStyle = .background
+        settings.comparisonLayout = .topAndBottom
         settings.setColor(
             NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1),
             for: .character
@@ -31,6 +32,7 @@ struct AppSettingsTests {
         #expect(restored.syncCaret == true)
         #expect(restored.shortcuts == .optionJK)
         #expect(restored.highlightStyle == .background)
+        #expect(restored.comparisonLayout == .topAndBottom)
         #expect(restored.palette.character == settings.palette.character)
     }
 }

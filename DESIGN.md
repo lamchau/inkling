@@ -40,8 +40,9 @@ question needs answering.
 ### Keep both sides equally important
 
 Neither file is a privileged source or destination. The panes remain exactly
-equal in width, both are editable, and every side-specific action has a mirrored
-equivalent. Direction becomes explicit only when the user copies a block.
+equal in width when placed side by side and equal in height when stacked. Both
+are editable, and every pane-specific action has a mirrored equivalent.
+Direction becomes explicit only when the user copies a block.
 
 ### Separate review units from mutation units
 
@@ -79,16 +80,17 @@ performed away from the main actor; stale results are discarded.
 
 ### Setup
 
-The empty state presents one drop well per side. A user may fill the 2 slots
-from unrelated directories, drop 2 files together, or use the native 2-file
-selection panel.
+The empty state presents one drop well per pane, arranged to match the selected
+layout. A user may fill the 2 slots from unrelated directories, drop 2 files
+together, or use the native 2-file selection panel.
 
 ### Review
 
 The center rail provides previous/next navigation and communicates the current
-position. Navigation centers and briefly flashes the semantic range while a
-persistent underline retains orientation. The user's text selection remains
-untouched.
+position. It runs vertically between side-by-side panes and horizontally
+between stacked panes. Navigation centers and briefly flashes the semantic
+range while a persistent underline retains orientation. The user's text
+selection remains untouched.
 
 ### Edit and transfer
 

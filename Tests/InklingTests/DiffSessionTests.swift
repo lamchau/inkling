@@ -140,6 +140,29 @@ struct DiffSessionTests {
         #expect(rightEditor.testUndoManager.canRedo)
     }
 
+    @Test("stacked layout describes vertical block transfers")
+    func stackedCopyBlockLabels() {
+        let suite = "InklingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        let (session, _, _) = makeTransferSession(
+            left: "one\nupper\nthree",
+            right: "one\nlower\nthree",
+            settings: settings
+        )
+        session.settings.comparisonLayout = .topAndBottom
+
+        #expect(
+            session.copyBlockActionTitle(from: .left)
+                == "Copy Block Top to Bottom — right.txt"
+        )
+        #expect(
+            session.copyBlockHelp(from: .right)
+                == "Copy Block bottom → top into left.txt"
+        )
+    }
+
     @Test("right-to-left Copy Block replaces the complete hunk")
     func copyBlockRightToLeft() {
         let (session, leftEditor, _) = makeTransferSession(
@@ -394,7 +417,12 @@ struct DiffSessionTests {
         saveFile: @escaping DiffSession.SaveFile = { _, _ in },
         decision: DiffSession.UnsavedChangesDecision = .discard
     ) -> DiffSession {
-        DiffSession(
+        let settings = AppSettings(
+            defaults: UserDefaults(suiteName: "InklingTests.DiffSession")!
+        )
+        settings.comparisonLayout = .sideBySide
+        return DiffSession(
+            settings: settings,
             loadFile: { url in
                 let text = switch url.lastPathComponent {
                 case "left.txt": "left"
@@ -410,9 +438,20 @@ struct DiffSessionTests {
 
     private func makeTransferSession(
         left: String,
-        right: String
+        right: String,
+        settings: AppSettings? = nil
     ) -> (DiffSession, TestTextView, TestTextView) {
+        let resolvedSettings: AppSettings
+        if let settings {
+            resolvedSettings = settings
+        } else {
+            resolvedSettings = AppSettings(
+                defaults: UserDefaults(suiteName: "InklingTests.DiffSession")!
+            )
+            resolvedSettings.comparisonLayout = .sideBySide
+        }
         let session = DiffSession(
+            settings: resolvedSettings,
             loadFile: { url in
                 let text = switch url.lastPathComponent {
                 case "left.txt": left

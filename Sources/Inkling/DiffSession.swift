@@ -124,9 +124,16 @@ final class DiffSession {
 
     func chooseFile(for side: DiffSide) {
         let panel = NSOpenPanel()
-        panel.title = side == .left
-            ? L10n.string("Choose Left File")
-            : L10n.string("Choose Right File")
+        switch (settings.comparisonLayout, side) {
+        case (.sideBySide, .left):
+            panel.title = L10n.string("Choose Left File")
+        case (.sideBySide, .right):
+            panel.title = L10n.string("Choose Right File")
+        case (.topAndBottom, .left):
+            panel.title = L10n.string("Choose Top File")
+        case (.topAndBottom, .right):
+            panel.title = L10n.string("Choose Bottom File")
+        }
         panel.prompt = L10n.string("Choose")
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -276,9 +283,17 @@ final class DiffSession {
 
     func copyBlockActionTitle(from source: DiffSide) -> String {
         let destination = opposite(of: source)
-        let direction = source == .left
-            ? L10n.string("Left to Right")
-            : L10n.string("Right to Left")
+        let direction: String
+        switch (settings.comparisonLayout, source) {
+        case (.sideBySide, .left):
+            direction = L10n.string("Left to Right")
+        case (.sideBySide, .right):
+            direction = L10n.string("Right to Left")
+        case (.topAndBottom, .left):
+            direction = L10n.string("Top to Bottom")
+        case (.topAndBottom, .right):
+            direction = L10n.string("Bottom to Top")
+        }
         guard let filename = url(for: destination)?.lastPathComponent else {
             return L10n.string("Copy Block \(direction)")
         }
@@ -544,9 +559,17 @@ final class DiffSession {
 
     private func copyBlockRoute(from source: DiffSide) -> String {
         let destination = opposite(of: source)
-        let direction = source == .left
-            ? L10n.string("left → right")
-            : L10n.string("right → left")
+        let direction: String
+        switch (settings.comparisonLayout, source) {
+        case (.sideBySide, .left):
+            direction = L10n.string("left → right")
+        case (.sideBySide, .right):
+            direction = L10n.string("right → left")
+        case (.topAndBottom, .left):
+            direction = L10n.string("top → bottom")
+        case (.topAndBottom, .right):
+            direction = L10n.string("bottom → top")
+        }
         guard let filename = url(for: destination)?.lastPathComponent else {
             return direction
         }
@@ -658,7 +681,16 @@ final class DiffSession {
         let names = [DiffSide.left, .right]
             .filter(sides.contains)
             .map {
-                $0 == .left ? L10n.string("left") : L10n.string("right")
+                switch (settings.comparisonLayout, $0) {
+                case (.sideBySide, .left):
+                    L10n.string("left")
+                case (.sideBySide, .right):
+                    L10n.string("right")
+                case (.topAndBottom, .left):
+                    L10n.string("top")
+                case (.topAndBottom, .right):
+                    L10n.string("bottom")
+                }
             }
         return names.joined(separator: L10n.string(" and "))
     }

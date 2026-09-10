@@ -17,6 +17,18 @@ struct DiffTextViewTests {
         )
     }
 
+    @Test("stacked comparison panes always have equal heights")
+    func equalPaneHeights() {
+        let totalHeight: CGFloat = 800
+        let paneHeight = EditorLayout.paneHeight(totalHeight: totalHeight)
+
+        #expect(
+            paneHeight * 2
+                + EditorLayout.railHeight
+                + EditorLayout.dividerWidth * 2 == totalHeight
+        )
+    }
+
     @Test("diff colors are installed as temporary layout attributes")
     func temporaryColors() {
         let textView = NSTextView()

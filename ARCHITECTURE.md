@@ -33,7 +33,7 @@ flowchart LR
 | `DiffEngine.swift` | Line alignment, changed-line pairing, semantic/token/character refinement |
 | `Models.swift` | Diff ranges, changes, hunks, highlights, loaded files, errors |
 | `TextFileService.swift` | Size checks, strict decoding, binary rejection, atomic UTF-8 writes |
-| `AppSettings.swift` | Persisted algorithms, shortcuts, editor options, highlight style, palette |
+| `AppSettings.swift` | Persisted algorithms, layout, shortcuts, editor options, highlight style, palette |
 | `L10n.swift` | String Catalog lookup from the packaged resource bundle |
 
 ## State Ownership
@@ -126,9 +126,11 @@ mutating a newer document.
 - model-driven text replacement disables undo registration;
 - direct editing follows the native delegate and text-storage lifecycle.
 
-The root comparison uses `HSplitView` with explicit equal pane constraints and
-a fixed-width center rail. This arrangement is an implementation invariant:
-replacing it with a simple SwiftUI `HStack` has caused one editor to render
+The root comparison uses `HSplitView` with explicit equal-width constraints for
+side-by-side layout and `VSplitView` with explicit equal-height constraints for
+top-and-bottom layout. A fixed-thickness center rail follows the selected
+orientation. These split views are implementation invariants: replacing the
+horizontal split with a simple SwiftUI `HStack` has caused one editor to render
 blank.
 
 ## Highlight Rendering
@@ -200,7 +202,7 @@ The test suite uses Swift Testing and covers:
 - navigation and stale-result rejection;
 - dirty state, replacement guards, partial saves, and native undo;
 - strict encoding and file-size behavior;
-- pane geometry and AppKit highlight rendering;
+- horizontal and vertical pane geometry and AppKit highlight rendering;
 - persisted settings and custom palettes.
 
 Use focused tests while iterating and run `just check` before landing changes

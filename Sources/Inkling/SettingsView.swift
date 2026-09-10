@@ -35,6 +35,16 @@ struct SettingsView: View {
             }
 
             Form {
+                Picker(
+                    L10n.string("Comparison layout"),
+                    selection: $settings.comparisonLayout
+                ) {
+                    ForEach(ComparisonLayout.allCases) { layout in
+                        Label(layout.title, systemImage: layout.systemImage)
+                            .tag(layout)
+                    }
+                }
+
                 Toggle(L10n.string("Show line numbers"), isOn: $settings.showLineNumbers)
                 Toggle(L10n.string("Synchronize scrolling"), isOn: $settings.syncScrolling)
                 Toggle(L10n.string("Synchronize caret position"), isOn: $settings.syncCaret)
