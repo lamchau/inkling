@@ -49,6 +49,15 @@ struct TextFileServiceTests {
         #expect(loaded.text == text)
     }
 
+    @Test("reports encoded byte count for warning decisions")
+    func reportsByteCount() throws {
+        let data = Data("café".utf8)
+        let loaded = try load(data)
+
+        #expect(loaded.byteCount == data.count)
+        #expect(TextFileService.largeFileWarningSize < TextFileService.maximumSize)
+    }
+
     @Test("rejects malformed unsupported bytes")
     func rejectsMalformedBytes() throws {
         let url = try fixtureURL(for: Data([0xC3, 0x28, 0x80]))

@@ -14,7 +14,7 @@ struct AppSettingsTests {
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let settings = AppSettings(defaults: defaults)
-        settings.algorithm = .character
+        settings.strategy = .character
         settings.showLineNumbers = false
         settings.syncScrolling = false
         settings.syncCaret = true
@@ -27,7 +27,7 @@ struct AppSettingsTests {
         )
 
         let restored = AppSettings(defaults: defaults)
-        #expect(restored.algorithm == .character)
+        #expect(restored.strategy == .character)
         #expect(restored.showLineNumbers == false)
         #expect(restored.syncScrolling == false)
         #expect(restored.syncCaret == true)

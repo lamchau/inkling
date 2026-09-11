@@ -205,33 +205,33 @@ struct DiffEngineTests {
         #expect(result.changes.map(\.rightNavigationOffset) == [4, 16])
     }
 
-    @Test("algorithms expose distinct levels of detail")
-    func algorithms() {
+    @Test("strategies expose distinct levels of detail")
+    func strategies() {
         let left = "color shared alpha"
         let right = "colour shared beta"
         let semantic = DiffEngine.compare(
             left: left,
             right: right,
             ignoreWhitespace: false,
-            algorithm: .semantic
+            strategy: .semantic
         )
         let word = DiffEngine.compare(
             left: left,
             right: right,
             ignoreWhitespace: false,
-            algorithm: .word
+            strategy: .word
         )
         let character = DiffEngine.compare(
             left: left,
             right: right,
             ignoreWhitespace: false,
-            algorithm: .character
+            strategy: .character
         )
         let line = DiffEngine.compare(
             left: left,
             right: right,
             ignoreWhitespace: false,
-            algorithm: .line
+            strategy: .line
         )
 
         #expect(semantic.leftHighlights.contains { $0.kind.category == .word })
@@ -251,7 +251,7 @@ struct DiffEngineTests {
             left: "ab",
             right: "ba",
             ignoreWhitespace: false,
-            algorithm: .character
+            strategy: .character
         )
 
         #expect(result.leftHighlights.map(\.range) == [
@@ -264,7 +264,7 @@ struct DiffEngineTests {
 
     @Test("large comparisons retain unique interior anchors")
     func largePatienceAnchors() {
-        let shared = (0..<600).map { "line \($0)" }
+        let shared = (0..<1_100).map { "line \($0)" }
         let result = DiffEngine.compare(
             left: shared.joined(separator: "\n"),
             right: (["inserted first"] + shared + ["inserted last"])
@@ -276,11 +276,13 @@ struct DiffEngineTests {
         #expect(result.leftHighlights.isEmpty)
         #expect(result.rightHighlights.count == 2)
         #expect(result.rightHighlights.allSatisfy { $0.kind.category == .addition })
+        #expect(result.diagnostics.quality == .anchored)
+        #expect(result.diagnostics.usedPatienceAnchors)
     }
 
     @Test("large repeated inputs use linear-space alignment")
     func largeLinearSpaceAlignment() {
-        let left = (0..<600).map { $0.isMultiple(of: 2) ? "alpha" : "beta" }
+        let left = (0..<1_100).map { $0.isMultiple(of: 2) ? "alpha" : "beta" }
         let right = Array(left.dropFirst()) + [left[0]]
         let result = DiffEngine.compare(
             left: left.joined(separator: "\n"),
@@ -291,10 +293,12 @@ struct DiffEngineTests {
         #expect(result.hunks.count == 2)
         #expect(result.leftHighlights.count == 1)
         #expect(result.rightHighlights.count == 1)
+        #expect(result.diagnostics.quality == .exact)
+        #expect(result.diagnostics.usedLinearSpaceAlignment)
     }
 
     @Test("line pairing sensitivity is configurable")
-    func configurableLinePairing() {
+    func configurableLinePairing() throws {
         let left = "shared alpha\nunrelated left"
         let right = "unrelated right\nshared beta"
         let normal = DiffEngine.compare(
@@ -306,7 +310,7 @@ struct DiffEngineTests {
             left: left,
             right: right,
             ignoreWhitespace: false,
-            configuration: DiffConfiguration(linePairingThreshold: 1)
+            configuration: try DiffConfiguration(linePairingThreshold: 1)
         )
 
         #expect(normal.leftHighlights.contains { $0.kind.category == .deletion })

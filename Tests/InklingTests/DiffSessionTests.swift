@@ -10,7 +10,7 @@ struct DiffSessionTests {
     @Test("next and previous recenter on semantic changes")
     func changeNavigation() {
         let session = DiffSession()
-        session.result = DiffResult(
+        session.setComparisonResult(DiffResult(
             leftHighlights: [],
             rightHighlights: [],
             hunks: [
@@ -40,7 +40,7 @@ struct DiffSessionTests {
                     rightNavigationOffset: 90
                 ),
             ]
-        )
+        ), documentRevision: session.documentRevision)
 
         session.nextChange()
         #expect(session.currentChangeIndex == 0)
@@ -64,11 +64,11 @@ struct DiffSessionTests {
         let session = DiffSession()
         session.leftText = "alpha\nsame\nomega"
         session.rightText = "ALPHA\nsame\nOMEGA"
-        session.result = DiffEngine.compare(
+        session.setComparisonResult(DiffEngine.compare(
             left: session.leftText,
             right: session.rightText,
             ignoreWhitespace: false
-        ).stamped(with: session.documentRevision)
+        ), documentRevision: session.documentRevision)
         session.nextChange()
         session.nextChange()
         let navigationRevision = session.navigationRevision
@@ -94,9 +94,10 @@ struct DiffSessionTests {
             left: session.leftText,
             right: session.rightText,
             ignoreWhitespace: false
-        ).stamped(with: session.documentRevision)
+        )
+        let staleRevision = session.documentRevision
         session.rightText = "one\nnewer"
-        session.result = staleResult
+        session.setComparisonResult(staleResult, documentRevision: staleRevision)
         session.nextChange()
 
         session.copyCurrentBlock(from: .left)
@@ -185,7 +186,7 @@ struct DiffSessionTests {
             left: "one\nleft",
             right: "one\nright"
         )
-        session.result = DiffResult(
+        session.setComparisonResult(DiffResult(
             leftHighlights: [],
             rightHighlights: [],
             hunks: [
@@ -206,9 +207,8 @@ struct DiffSessionTests {
                     leftNavigationOffset: 0,
                     rightNavigationOffset: 0
                 ),
-            ],
-            documentRevision: session.documentRevision
-        )
+            ]
+        ), documentRevision: session.documentRevision)
         session.currentChangeIndex = 0
 
         session.copyCurrentBlock(from: .left)
@@ -275,6 +275,32 @@ struct DiffSessionTests {
         #expect(session.leftText == "left")
         #expect(session.rightText == "right")
         #expect(session.hasBothFiles)
+    }
+
+    @Test("large file warning can cancel loading")
+    func largeFileWarningCancelsLoad() {
+        var warnedFiles: [LoadedTextFile] = []
+        let session = DiffSession(
+            loadFile: { url in
+                LoadedTextFile(
+                    url: url,
+                    text: "large",
+                    byteCount: TextFileService.largeFileWarningSize
+                )
+            },
+            saveFile: { _, _ in },
+            decisionProvider: { _, _ in .discard },
+            largeFileDecisionProvider: { files in
+                warnedFiles = files
+                return .cancel
+            }
+        )
+
+        session.load(leftURL, for: .left)
+
+        #expect(warnedFiles.map(\.url) == [leftURL])
+        #expect(session.leftURL == nil)
+        #expect(session.leftText.isEmpty)
     }
 
     @Test("focused save writes only the focused dirty side")
@@ -392,7 +418,7 @@ struct DiffSessionTests {
 
     private func waitForCurrentResult(_ session: DiffSession) async throws {
         for _ in 0..<100 {
-            if session.result.documentRevision == session.documentRevision,
+            if session.resultDocumentRevision == session.documentRevision,
                !session.result.changes.isEmpty
             {
                 return
@@ -416,7 +442,8 @@ struct DiffSessionTests {
 
     private func makeSession(
         saveFile: @escaping DiffSession.SaveFile = { _, _ in },
-        decision: DiffSession.UnsavedChangesDecision = .discard
+        decision: DiffSession.UnsavedChangesDecision = .discard,
+        largeFileDecision: DiffSession.LargeFileDecision = .compare
     ) -> DiffSession {
         let settings = AppSettings(
             defaults: UserDefaults(suiteName: "InklingTests.DiffSession")!
@@ -433,7 +460,8 @@ struct DiffSessionTests {
                 return LoadedTextFile(url: url, text: text)
             },
             saveFile: saveFile,
-            decisionProvider: { _, _ in decision }
+            decisionProvider: { _, _ in decision },
+            largeFileDecisionProvider: { _ in largeFileDecision }
         )
     }
 
@@ -479,11 +507,11 @@ struct DiffSessionTests {
         rightEditor.observeStorageChanges()
         session.registerEditor(leftEditor, for: .left)
         session.registerEditor(rightEditor, for: .right)
-        session.result = DiffEngine.compare(
+        session.setComparisonResult(DiffEngine.compare(
             left: left,
             right: right,
             ignoreWhitespace: false
-        ).stamped(with: session.documentRevision)
+        ), documentRevision: session.documentRevision)
         session.nextChange()
         return (session, leftEditor, rightEditor)
     }

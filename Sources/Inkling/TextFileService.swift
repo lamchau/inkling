@@ -2,6 +2,7 @@ import Foundation
 
 struct TextFileService: Sendable {
     static let maximumSize = 5 * 1024 * 1024
+    static let largeFileWarningSize = 1 * 1024 * 1024
 
     func load(_ url: URL) throws -> LoadedTextFile {
         let canonicalURL = url.standardizedFileURL.resolvingSymlinksInPath()
@@ -20,7 +21,7 @@ struct TextFileService: Sendable {
             throw InklingError.binary(canonicalURL)
         }
 
-        return LoadedTextFile(url: canonicalURL, text: text)
+        return LoadedTextFile(url: canonicalURL, text: text, byteCount: data.count)
     }
 
     func save(_ text: String, to url: URL) throws {

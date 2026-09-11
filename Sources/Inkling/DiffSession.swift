@@ -17,6 +17,11 @@ final class DiffSession {
         case closing
     }
 
+    enum LargeFileDecision {
+        case compare
+        case cancel
+    }
+
     struct SaveOutcome: Equatable {
         let saved: [DiffSide]
         let failed: [DiffSide]
@@ -32,10 +37,14 @@ final class DiffSession {
         [DiffSide],
         UnsavedChangesReason
     ) -> UnsavedChangesDecision
+    typealias LargeFileDecisionProvider = @MainActor (
+        [LoadedTextFile]
+    ) -> LargeFileDecision
 
     private let loadFile: LoadFile
     private let saveFile: SaveFile
     private let decisionProvider: DecisionProvider
+    private let largeFileDecisionProvider: LargeFileDecisionProvider
     private var refreshTask: Task<Void, Never>?
     private var refreshRevision = 0
     private weak var leftEditor: NSTextView?
@@ -46,12 +55,15 @@ final class DiffSession {
         settings: AppSettings = AppSettings(),
         loadFile: @escaping LoadFile = { try TextFileService().load($0) },
         saveFile: @escaping SaveFile = { try TextFileService().save($0, to: $1) },
-        decisionProvider: @escaping DecisionProvider = DiffSession.presentUnsavedChangesAlert
+        decisionProvider: @escaping DecisionProvider = DiffSession.presentUnsavedChangesAlert,
+        largeFileDecisionProvider: @escaping LargeFileDecisionProvider =
+            DiffSession.presentLargeFileAlert
     ) {
         self.settings = settings
         self.loadFile = loadFile
         self.saveFile = saveFile
         self.decisionProvider = decisionProvider
+        self.largeFileDecisionProvider = largeFileDecisionProvider
     }
 
     var leftURL: URL?
@@ -75,12 +87,13 @@ final class DiffSession {
     var ignoreWhitespace = false {
         didSet { scheduleRefresh() }
     }
-    var result = DiffResult.empty
+    private(set) var result = DiffResult.empty
     var currentChangeIndex: Int?
     var leftNavigationOffset = 0
     var rightNavigationOffset = 0
     var navigationRevision = 0
     private(set) var documentRevision = 0
+    private(set) var resultDocumentRevision = 0
     var focusedSide: DiffSide?
     var errorMessage: String?
     var statusMessage = L10n.string("Choose 2 text files to begin.")
@@ -178,6 +191,7 @@ final class DiffSession {
             guard loaded.url != otherURL else {
                 throw InklingError.sameFile
             }
+            guard confirmLargeFiles([loaded]) else { return }
             guard confirmReplacement(of: [side], reason: .replacing(side)) else {
                 return
             }
@@ -209,6 +223,7 @@ final class DiffSession {
             guard left.url != right.url else {
                 throw InklingError.sameFile
             }
+            guard confirmLargeFiles([left, right]) else { return }
             guard confirmReplacement(
                 of: [.left, .right],
                 reason: .replacing(nil)
@@ -307,7 +322,7 @@ final class DiffSession {
 
     func copyCurrentBlock(from source: DiffSide) {
         let route = copyBlockRoute(from: source)
-        guard result.documentRevision == documentRevision else {
+        guard resultDocumentRevision == documentRevision else {
             statusMessage = L10n.string(
                 "Copy Block skipped: \(route); comparison is out of date."
             )
@@ -392,14 +407,14 @@ final class DiffSession {
         let leftText = leftText
         let rightText = rightText
         let ignoreWhitespace = ignoreWhitespace
-        let algorithm = settings.algorithm
+        let strategy = settings.strategy
         refreshTask = Task {
             let computed = await Task.detached(priority: .userInitiated) {
                 DiffEngine.compare(
                     left: leftText,
                     right: rightText,
                     ignoreWhitespace: ignoreWhitespace,
-                    algorithm: algorithm
+                    strategy: strategy
                 )
             }.value
             guard !Task.isCancelled else { return }
@@ -408,9 +423,17 @@ final class DiffSession {
             else {
                 return
             }
-            result = computed.stamped(with: documentRevision)
+            setComparisonResult(computed, documentRevision: documentRevision)
             reconcileNavigation()
         }
+    }
+
+    func setComparisonResult(
+        _ result: DiffResult,
+        documentRevision: Int
+    ) {
+        self.result = result
+        resultDocumentRevision = documentRevision
     }
 
     private func scheduleRefresh() {
@@ -419,13 +442,13 @@ final class DiffSession {
         let refreshRevision = refreshRevision
         let documentRevision = documentRevision
         guard hasBothFiles else {
-            result = .empty.stamped(with: documentRevision)
+            setComparisonResult(.empty, documentRevision: documentRevision)
             return
         }
         let leftText = leftText
         let rightText = rightText
         let ignoreWhitespace = ignoreWhitespace
-        let algorithm = settings.algorithm
+        let strategy = settings.strategy
         refreshTask = Task {
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
@@ -434,7 +457,7 @@ final class DiffSession {
                     left: leftText,
                     right: rightText,
                     ignoreWhitespace: ignoreWhitespace,
-                    algorithm: algorithm
+                    strategy: strategy
                 )
             }.value
             guard !Task.isCancelled else { return }
@@ -443,7 +466,7 @@ final class DiffSession {
             else {
                 return
             }
-            result = computed.stamped(with: documentRevision)
+            setComparisonResult(computed, documentRevision: documentRevision)
             reconcileNavigation()
         }
     }
@@ -467,9 +490,21 @@ final class DiffSession {
                 )
             }
             let count = result.changes.count
-            statusMessage = count == 1
+            let changeSummary = count == 1
                 ? L10n.string("1 change.")
                 : L10n.string("\(count) changes.")
+            statusMessage = changeSummary + comparisonQualityNote
+        }
+    }
+
+    private var comparisonQualityNote: String {
+        switch result.diagnostics.quality {
+        case .exact:
+            ""
+        case .anchored:
+            " " + L10n.string("Stable-anchor matching used for this large comparison.")
+        case .bounded:
+            " " + L10n.string("Bounded matching used for this large comparison.")
         }
     }
 
@@ -700,6 +735,14 @@ final class DiffSession {
         errorMessage = error.localizedDescription
     }
 
+    private func confirmLargeFiles(_ files: [LoadedTextFile]) -> Bool {
+        let largeFiles = files.filter {
+            $0.byteCount >= TextFileService.largeFileWarningSize
+        }
+        guard !largeFiles.isEmpty else { return true }
+        return largeFileDecisionProvider(largeFiles) == .compare
+    }
+
     private static func presentUnsavedChangesAlert(
         sides: [DiffSide],
         reason: UnsavedChangesReason
@@ -720,6 +763,7 @@ final class DiffSession {
                     "Save changes before replacing both files?"
                 )
             }
+
             alert.informativeText = L10n.string(
                 "Unsaved changes will be lost if you discard them."
             )
@@ -740,5 +784,26 @@ final class DiffSession {
         default:
             return .cancel
         }
+    }
+
+    private static func presentLargeFileAlert(
+        files: [LoadedTextFile]
+    ) -> LargeFileDecision {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        let descriptions = files.map {
+            "\($0.url.lastPathComponent) (\(formatter.string(fromByteCount: Int64($0.byteCount))))"
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.string("Compare large files?")
+        alert.informativeText = descriptions.joined(separator: "\n")
+            + "\n\n"
+            + L10n.string(
+                "Large comparisons can take longer and may use bounded matching."
+            )
+        alert.addButton(withTitle: L10n.string("Compare"))
+        alert.addButton(withTitle: L10n.string("Cancel"))
+        return alert.runModal() == .alertFirstButtonReturn ? .compare : .cancel
     }
 }

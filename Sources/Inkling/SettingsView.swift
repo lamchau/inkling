@@ -9,12 +9,12 @@ struct SettingsView: View {
 
         TabView {
             Form {
-                Picker(L10n.string("Diff algorithm"), selection: $settings.algorithm) {
-                    ForEach(DiffAlgorithm.allCases) { algorithm in
-                        Text(algorithm.title).tag(algorithm)
+                Picker(L10n.string("Comparison strategy"), selection: $settings.strategy) {
+                    ForEach(DiffStrategy.allCases) { strategy in
+                        Text(strategy.title).tag(strategy)
                     }
                 }
-                Text(settings.algorithm.detail)
+                Text(settings.strategy.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

@@ -18,19 +18,19 @@ struct DiffCorpusTests {
     func reportMetrics() throws {
         for fixtureName in Self.fixtureNames {
             let fixture = try loadFixture(named: fixtureName)
-            for algorithm in DiffAlgorithm.allCases {
+            for strategy in DiffStrategy.allCases {
                 let start = ContinuousClock.now
                 let result = DiffEngine.compare(
                     left: fixture.left,
                     right: fixture.right,
                     ignoreWhitespace: false,
-                    algorithm: algorithm
+                    strategy: strategy
                 )
                 let duration = start.duration(to: .now)
                 validate(result, left: fixture.left, right: fixture.right)
                 print(reportLine(
                     fixture: fixtureName,
-                    algorithm: algorithm,
+                    strategy: strategy,
                     result: result,
                     duration: duration
                 ))
@@ -47,7 +47,7 @@ struct DiffCorpusTests {
                 left: fixture.left,
                 right: fixture.right,
                 ignoreWhitespace: false,
-                algorithm: .character
+                strategy: .character
             )
         )
         let word = resultMetrics(
@@ -55,7 +55,7 @@ struct DiffCorpusTests {
                 left: fixture.left,
                 right: fixture.right,
                 ignoreWhitespace: false,
-                algorithm: .word
+                strategy: .word
             )
         )
         let line = resultMetrics(
@@ -63,7 +63,7 @@ struct DiffCorpusTests {
                 left: fixture.left,
                 right: fixture.right,
                 ignoreWhitespace: false,
-                algorithm: .line
+                strategy: .line
             )
         )
 
@@ -102,12 +102,12 @@ struct DiffCorpusTests {
 
     private func reportLine(
         fixture: String,
-        algorithm: DiffAlgorithm,
+        strategy: DiffStrategy,
         result: DiffResult,
         duration: Duration
     ) -> String {
         let metrics = resultMetrics(result)
-        return "CORPUS fixture=\(fixture) algorithm=\(algorithm.rawValue) "
+        return "CORPUS fixture=\(fixture) strategy=\(strategy.rawValue) "
             + "left_coverage=\(metrics.leftCoverage) "
             + "right_coverage=\(metrics.rightCoverage) "
             + "left_spans=\(metrics.leftSpans) "

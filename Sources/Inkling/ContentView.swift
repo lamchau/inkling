@@ -49,7 +49,7 @@ struct ContentView: View {
                 session.requestWindowClose()
             }
         }
-        .onChange(of: settings.algorithm) {
+        .onChange(of: settings.strategy) {
             session.refreshImmediately()
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -76,6 +76,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             paletteButton
+            strategyPicker
             layoutPicker
 
             fileButton(side: .right, url: session.rightURL)
@@ -261,6 +262,25 @@ struct ContentView: View {
         .frame(width: 72)
         .help(settings.comparisonLayout.title)
         .accessibilityLabel(L10n.string("Comparison layout"))
+    }
+
+    private var strategyPicker: some View {
+        Picker(
+            L10n.string("Comparison strategy"),
+            selection: Binding(
+                get: { settings.strategy },
+                set: { settings.strategy = $0 }
+            )
+        ) {
+            ForEach(DiffStrategy.allCases) { strategy in
+                Text(strategy.title).tag(strategy)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 112)
+        .help(settings.strategy.detail)
+        .accessibilityLabel(L10n.string("Comparison strategy"))
     }
 
     private var paletteButton: some View {

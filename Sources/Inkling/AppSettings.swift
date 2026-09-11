@@ -3,10 +3,10 @@ import InklingDiff
 import Observation
 import SwiftUI
 
-extension DiffAlgorithm: Identifiable {
+extension DiffStrategy: Identifiable {
     public var id: Self { self }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .semantic: L10n.string("Semantic")
         case .word: L10n.string("Word")
@@ -15,7 +15,7 @@ extension DiffAlgorithm: Identifiable {
         }
     }
 
-    var detail: String {
+    public var detail: String {
         switch self {
         case .semantic:
             L10n.string("Stable word anchors, phrase blocks, and exact character edits")
@@ -172,7 +172,7 @@ enum ShortcutPreset: String, CaseIterable, Identifiable {
 @Observable
 final class AppSettings {
     private enum Key {
-        static let algorithm = "diffAlgorithm"
+        static let strategy = "diffAlgorithm"
         static let showLineNumbers = "showLineNumbers"
         static let syncScrolling = "syncScrolling"
         static let syncCaret = "syncCaret"
@@ -182,8 +182,8 @@ final class AppSettings {
         static let comparisonLayout = "comparisonLayout"
     }
 
-    var algorithm: DiffAlgorithm {
-        didSet { defaults.set(algorithm.rawValue, forKey: Key.algorithm) }
+    var strategy: DiffStrategy {
+        didSet { defaults.set(strategy.rawValue, forKey: Key.strategy) }
     }
     var showLineNumbers: Bool {
         didSet { defaults.set(showLineNumbers, forKey: Key.showLineNumbers) }
@@ -213,8 +213,8 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        algorithm = DiffAlgorithm(
-            rawValue: defaults.string(forKey: Key.algorithm) ?? ""
+        strategy = DiffStrategy(
+            rawValue: defaults.string(forKey: Key.strategy) ?? ""
         ) ?? .semantic
         showLineNumbers = defaults.object(forKey: Key.showLineNumbers) as? Bool ?? true
         syncScrolling = defaults.object(forKey: Key.syncScrolling) as? Bool ?? true

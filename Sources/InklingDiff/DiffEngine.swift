@@ -1,38 +1,59 @@
 import Foundation
 
+/// Controls how aggressively changed lines are paired for inline refinement.
 public struct DiffConfiguration: Equatable, Sendable {
-    public static let `default` = DiffConfiguration()
+    public static let `default` = DiffConfiguration(validatedLinePairingThreshold: 0.5)
 
+    /// The minimum similarity required to pair two changed lines.
     public let linePairingThreshold: Double
 
-    public init(linePairingThreshold: Double = 0.5) {
-        precondition(
-            (0...1).contains(linePairingThreshold),
-            "Line pairing threshold must be between 0 and 1."
-        )
+    /// Creates a configuration with a finite threshold between zero and one.
+    public init(linePairingThreshold: Double = 0.5) throws {
+        guard linePairingThreshold.isFinite,
+              (0...1).contains(linePairingThreshold)
+        else {
+            throw DiffConfigurationError.invalidLinePairingThreshold(
+                linePairingThreshold
+            )
+        }
+        self.linePairingThreshold = linePairingThreshold
+    }
+
+    private init(validatedLinePairingThreshold linePairingThreshold: Double) {
         self.linePairingThreshold = linePairingThreshold
     }
 }
 
+public enum DiffConfigurationError: Error, Equatable, Sendable {
+    case invalidLinePairingThreshold(Double)
+}
+
+/// Computes deterministic, UTF-16-addressed differences between two strings.
 public enum DiffEngine {
-    private static let matrixCellLimit = 250_000
-    private static let alignmentCellBudget = 2_000_000
+    private static let matrixCellLimit = 1_000_000
+    private static let alignmentCellBudget = 8_000_000
     private static let wordPairingThreshold = 0.5
     private static let editCost = 2
     private static let gapOpeningCost = 1
 
+    /// Compares two strings using the requested display strategy.
     public static func compare(
         left leftText: String,
         right rightText: String,
         ignoreWhitespace: Bool,
-        algorithm: DiffAlgorithm = .semantic,
+        strategy: DiffStrategy = .semantic,
         configuration: DiffConfiguration = .default
     ) -> DiffResult {
+        var context = ComparisonContext(
+            matrixCellLimit: matrixCellLimit,
+            initialCellBudget: alignmentCellBudget,
+            remainingCells: alignmentCellBudget
+        )
         let left = TextLines(leftText)
         let right = TextLines(rightText)
         let leftKeys = left.lines.map { normalized($0, ignoreWhitespace: ignoreWhitespace) }
         let rightKeys = right.lines.map { normalized($0, ignoreWhitespace: ignoreWhitespace) }
-        let matches = orderedMatches(leftKeys, rightKeys)
+        let matches = orderedMatches(leftKeys, rightKeys, context: &context)
 
         var leftHighlights: [TextHighlight] = []
         var rightHighlights: [TextHighlight] = []
@@ -57,7 +78,8 @@ public enum DiffEngine {
                     left: Array(left.lines[leftRange]),
                     right: Array(right.lines[rightRange]),
                     ignoreWhitespace: ignoreWhitespace,
-                    pairingThreshold: configuration.linePairingThreshold
+                    pairingThreshold: configuration.linePairingThreshold,
+                    context: &context
                 )
                 var pairedLeft = Set<Int>()
                 var pairedRight = Set<Int>()
@@ -74,16 +96,18 @@ public enum DiffEngine {
                         other: right.lines[rightLineIndex],
                         lineOffset: left.offsets[leftLineIndex],
                         color: color,
-                        algorithm: algorithm,
-                        ignoreWhitespace: ignoreWhitespace
+                        strategy: strategy,
+                        ignoreWhitespace: ignoreWhitespace,
+                        context: &context
                     )
                     let pairRightHighlights = characterHighlights(
                         source: right.lines[rightLineIndex],
                         other: left.lines[leftLineIndex],
                         lineOffset: right.offsets[rightLineIndex],
                         color: color,
-                        algorithm: algorithm,
-                        ignoreWhitespace: ignoreWhitespace
+                        strategy: strategy,
+                        ignoreWhitespace: ignoreWhitespace,
+                        context: &context
                     )
                     leftHighlights += pairLeftHighlights
                     rightHighlights += pairRightHighlights
@@ -101,6 +125,7 @@ public enum DiffEngine {
                         let highlight = fullLineHighlight(
                             line: left.lines[lineIndex],
                             offset: left.offsets[lineIndex],
+                            documentLength: leftText.utf16.count,
                             kind: .deletion
                         )
                         leftHighlights.append(highlight)
@@ -118,6 +143,7 @@ public enum DiffEngine {
                         let highlight = fullLineHighlight(
                             line: right.lines[lineIndex],
                             offset: right.offsets[lineIndex],
+                            documentLength: rightText.utf16.count,
                             kind: .addition
                         )
                         rightHighlights.append(highlight)
@@ -172,7 +198,8 @@ public enum DiffEngine {
             leftHighlights: leftHighlights.filter { $0.range.length > 0 },
             rightHighlights: rightHighlights.filter { $0.range.length > 0 },
             hunks: hunks,
-            changes: orderedChanges
+            changes: orderedChanges,
+            diagnostics: context.diagnostics
         )
     }
 
@@ -222,14 +249,17 @@ public enum DiffEngine {
         return line.filter { !$0.isWhitespace }
     }
 
-    private static func orderedMatches(_ left: [String], _ right: [String]) -> [Match] {
-        var budget = alignmentCellBudget
+    private static func orderedMatches(
+        _ left: [String],
+        _ right: [String],
+        context: inout ComparisonContext
+    ) -> [Match] {
         return boundedMatches(
             left,
             right,
             leftRange: left.indices,
             rightRange: right.indices,
-            budget: &budget
+            context: &context
         )
     }
 
@@ -238,7 +268,7 @@ public enum DiffEngine {
         _ right: [String],
         leftRange: Range<Int>,
         rightRange: Range<Int>,
-        budget: inout Int
+        context: inout ComparisonContext
     ) -> [Match] {
         guard !leftRange.isEmpty, !rightRange.isEmpty else { return [] }
 
@@ -274,10 +304,10 @@ public enum DiffEngine {
 
         let cellCount = boundedCellCount(coreLeft.count, coreRight.count)
         if let cellCount,
-           cellCount <= matrixCellLimit,
-           cellCount <= budget
+           cellCount <= context.matrixCellLimit,
+           cellCount <= context.remainingCells
         {
-            budget -= cellCount
+            context.remainingCells -= cellCount
             return prefix
                 + matrixMatches(
                     left,
@@ -295,6 +325,7 @@ public enum DiffEngine {
             rightRange: coreRight
         )
         if !anchors.isEmpty {
+            context.usedPatienceAnchors = true
             var matches = prefix
             var nextLeft = coreLeft.lowerBound
             var nextRight = coreRight.lowerBound
@@ -304,7 +335,7 @@ public enum DiffEngine {
                     right,
                     leftRange: nextLeft..<anchor.left,
                     rightRange: nextRight..<anchor.right,
-                    budget: &budget
+                    context: &context
                 )
                 matches.append(anchor)
                 nextLeft = anchor.left + 1
@@ -315,13 +346,14 @@ public enum DiffEngine {
                 right,
                 leftRange: nextLeft..<coreLeft.upperBound,
                 rightRange: nextRight..<coreRight.upperBound,
-                budget: &budget
+                context: &context
             )
             return matches + suffix.reversed()
         }
 
-        if let cellCount, cellCount <= budget {
-            budget -= cellCount
+        if let cellCount, cellCount <= context.remainingCells {
+            context.remainingCells -= cellCount
+            context.usedLinearSpaceAlignment = true
             return prefix
                 + linearSpaceMatches(
                     left,
@@ -332,6 +364,7 @@ public enum DiffEngine {
                 + suffix.reversed()
         }
 
+        context.exhaustedWorkBudget = true
         return prefix + suffix.reversed()
     }
 
@@ -541,10 +574,12 @@ public enum DiffEngine {
         left: [String],
         right: [String],
         ignoreWhitespace: Bool,
-        pairingThreshold: Double
+        pairingThreshold: Double,
+        context: inout ComparisonContext
     ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard fitsMatrix(left.count, right.count) else {
+        guard fitsMatrix(left.count, right.count, limit: context.matrixCellLimit) else {
+            context.usedPositionalFallback = true
             return zip(left.indices, right.indices).map { leftIndex, rightIndex in
                 ScoredMatch(left: leftIndex, right: rightIndex)
             }
@@ -553,7 +588,8 @@ public enum DiffEngine {
         let preferredPairs = similarPairs(
             left.map { normalized($0, ignoreWhitespace: ignoreWhitespace) },
             right.map { normalized($0, ignoreWhitespace: ignoreWhitespace) },
-            threshold: pairingThreshold
+            threshold: pairingThreshold,
+            context: &context
         )
         return fillUnpairedLines(
             in: preferredPairs,
@@ -565,12 +601,14 @@ public enum DiffEngine {
     private static func similarPairs(
         _ left: [String],
         _ right: [String],
-        threshold: Double
+        threshold: Double,
+        context: inout ComparisonContext
     ) -> [ScoredMatch] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard fitsMatrix(left.count, right.count) else {
+        guard fitsMatrix(left.count, right.count, limit: context.matrixCellLimit) else {
+            context.usedPositionalFallback = true
             return zip(left.indices, right.indices).compactMap { leftIndex, rightIndex in
-                similarity(left[leftIndex], right[rightIndex]) >= threshold
+                similarity(left[leftIndex], right[rightIndex], context: &context) >= threshold
                     ? ScoredMatch(left: leftIndex, right: rightIndex)
                     : nil
             }
@@ -590,7 +628,11 @@ public enum DiffEngine {
                     best.choice = .right
                 }
 
-                let score = similarity(left[leftIndex - 1], right[rightIndex - 1])
+                let score = similarity(
+                    left[leftIndex - 1],
+                    right[rightIndex - 1],
+                    context: &context
+                )
                 if score >= threshold {
                     var paired = cells[leftIndex - 1][rightIndex - 1]
                     paired.score += score
@@ -658,18 +700,28 @@ public enum DiffEngine {
                 && candidate.count > current.count)
     }
 
-    private static func similarity(_ left: String, _ right: String) -> Double {
+    private static func similarity(
+        _ left: String,
+        _ right: String,
+        context: inout ComparisonContext
+    ) -> Double {
         if left == right { return 1 }
         let leftCharacters = Array(left)
         let rightCharacters = Array(right)
         guard !leftCharacters.isEmpty, !rightCharacters.isEmpty else { return 0 }
-        guard fitsMatrix(leftCharacters.count, rightCharacters.count) else {
+        guard fitsMatrix(
+            leftCharacters.count,
+            rightCharacters.count,
+            limit: context.matrixCellLimit
+        ) else {
+            context.usedPrefixSimilarityFallback = true
             let sharedPrefix = zip(leftCharacters, rightCharacters).prefix { $0 == $1 }.count
             return (2 * Double(sharedPrefix)) / Double(leftCharacters.count + rightCharacters.count)
         }
         let matches = orderedMatches(
             leftCharacters.map(String.init),
-            rightCharacters.map(String.init)
+            rightCharacters.map(String.init),
+            context: &context
         ).count
         return (2 * Double(matches)) / Double(leftCharacters.count + rightCharacters.count)
     }
@@ -679,25 +731,33 @@ public enum DiffEngine {
         other: String,
         lineOffset: Int,
         color: Int,
-        algorithm: DiffAlgorithm,
-        ignoreWhitespace: Bool
+        strategy: DiffStrategy,
+        ignoreWhitespace: Bool,
+        context: inout ComparisonContext
     ) -> [TextHighlight] {
         let ranges: [ClassifiedRange]
-        switch algorithm {
+        switch strategy {
         case .semantic:
             ranges = semanticChangedRanges(
                 source: source,
                 other: other,
-                ignoreWhitespace: ignoreWhitespace
+                ignoreWhitespace: ignoreWhitespace,
+                context: &context
             )
         case .word:
             ranges = tokenChangedRanges(
                 source: source,
                 other: other,
-                ignoreWhitespace: ignoreWhitespace
+                ignoreWhitespace: ignoreWhitespace,
+                context: &context
             )
         case .character:
-            ranges = changedCharacterRanges(source: source, other: other, offset: 0)
+            ranges = changedCharacterRanges(
+                source: source,
+                other: other,
+                offset: 0,
+                context: &context
+            )
                 .map { ClassifiedRange(range: $0, category: .character) }
         case .line:
             ranges = [
@@ -722,11 +782,12 @@ public enum DiffEngine {
     private static func semanticChangedRanges(
         source: String,
         other: String,
-        ignoreWhitespace: Bool
+        ignoreWhitespace: Bool,
+        context: inout ComparisonContext
     ) -> [ClassifiedRange] {
         let sourceTokens = tokens(in: source, ignoreWhitespace: ignoreWhitespace)
         let otherTokens = tokens(in: other, ignoreWhitespace: ignoreWhitespace)
-        let matches = wordMatches(sourceTokens, otherTokens)
+        let matches = wordMatches(sourceTokens, otherTokens, context: &context)
 
         var ranges: [ClassifiedRange] = []
         var sourceStart = 0
@@ -739,7 +800,8 @@ public enum DiffEngine {
                 source: sourceTokens,
                 other: otherTokens,
                 sourceRange: sourceStart..<sourceEnd,
-                otherRange: otherStart..<otherEnd
+                otherRange: otherStart..<otherEnd,
+                context: &context
             )
 
             if let match {
@@ -754,14 +816,16 @@ public enum DiffEngine {
         source: [DiffToken],
         other: [DiffToken],
         sourceRange: Range<Int>,
-        otherRange: Range<Int>
+        otherRange: Range<Int>,
+        context: inout ComparisonContext
     ) -> [ClassifiedRange] {
         let sourceWords = sourceRange.filter { source[$0].kind == .word }
         let otherWords = otherRange.filter { other[$0].kind == .word }
         let wordPairs = similarPairs(
             sourceWords.map { source[$0].text },
             otherWords.map { other[$0].text },
-            threshold: wordPairingThreshold
+            threshold: wordPairingThreshold,
+            context: &context
         )
         var pairedSource = Set<Int>()
         var ranges: [ClassifiedRange] = []
@@ -777,7 +841,8 @@ public enum DiffEngine {
             ranges += changedCharacterRanges(
                 source: source[sourceIndex].text,
                 other: other[otherIndex].text,
-                offset: source[sourceIndex].range.location
+                offset: source[sourceIndex].range.location,
+                context: &context
             ).map { ClassifiedRange(range: $0, category: .character) }
         }
 
@@ -785,7 +850,8 @@ public enum DiffEngine {
         let otherNonWords = otherRange.filter { other[$0].kind != .word }
         for match in orderedMatches(
             sourceNonWords.map { source[$0].key },
-            otherNonWords.map { other[$0].key }
+            otherNonWords.map { other[$0].key },
+            context: &context
         ) {
             pairedSource.insert(sourceNonWords[match.left])
         }
@@ -811,11 +877,12 @@ public enum DiffEngine {
     private static func tokenChangedRanges(
         source: String,
         other: String,
-        ignoreWhitespace: Bool
+        ignoreWhitespace: Bool,
+        context: inout ComparisonContext
     ) -> [ClassifiedRange] {
         let sourceTokens = tokens(in: source, ignoreWhitespace: ignoreWhitespace)
         let otherTokens = tokens(in: other, ignoreWhitespace: ignoreWhitespace)
-        let matches = wordMatches(sourceTokens, otherTokens)
+        let matches = wordMatches(sourceTokens, otherTokens, context: &context)
 
         var ranges: [ClassifiedRange] = []
         var sourceStart = 0
@@ -828,7 +895,8 @@ public enum DiffEngine {
                 source: sourceTokens,
                 other: otherTokens,
                 sourceRange: sourceStart..<sourceEnd,
-                otherRange: otherStart..<otherEnd
+                otherRange: otherStart..<otherEnd,
+                context: &context
             )
 
             if let match {
@@ -843,13 +911,15 @@ public enum DiffEngine {
         source: [DiffToken],
         other: [DiffToken],
         sourceRange: Range<Int>,
-        otherRange: Range<Int>
+        otherRange: Range<Int>,
+        context: inout ComparisonContext
     ) -> [ClassifiedRange] {
         let sourceNonWords = sourceRange.filter { source[$0].kind != .word }
         let otherNonWords = otherRange.filter { other[$0].kind != .word }
         let matchedSource = Set(orderedMatches(
             sourceNonWords.map { source[$0].key },
-            otherNonWords.map { other[$0].key }
+            otherNonWords.map { other[$0].key },
+            context: &context
         ).map { sourceNonWords[$0.left] })
 
         return sourceRange
@@ -877,9 +947,14 @@ public enum DiffEngine {
 
     private static func wordMatches(
         _ source: [DiffToken],
-        _ other: [DiffToken]
+        _ other: [DiffToken],
+        context: inout ComparisonContext
     ) -> [Match] {
-        groupedMatches(source.map(\.key), other.map(\.key)).compactMap {
+        groupedMatches(
+            source.map(\.key),
+            other.map(\.key),
+            context: &context
+        ).compactMap {
             guard source[$0.left].kind == .word else { return nil }
             return $0
         }
@@ -903,11 +978,16 @@ public enum DiffEngine {
     private static func changedCharacterRanges(
         source: String,
         other: String,
-        offset: Int
+        offset: Int,
+        context: inout ComparisonContext
     ) -> [NSRange] {
         let sourceUnits = characterUnits(source, ignoreWhitespace: false)
         let otherUnits = characterUnits(other, ignoreWhitespace: false)
-        let matches = groupedMatches(sourceUnits.map(\.value), otherUnits.map(\.value))
+        let matches = groupedMatches(
+            sourceUnits.map(\.value),
+            otherUnits.map(\.value),
+            context: &context
+        )
         let matchedSource = Set(matches.map(\.left))
         return sourceUnits.indices
             .filter { !matchedSource.contains($0) }
@@ -979,10 +1059,21 @@ public enum DiffEngine {
     private static func fullLineHighlight(
         line: String,
         offset: Int,
+        documentLength: Int,
         kind: HighlightKind
     ) -> TextHighlight {
-        TextHighlight(
-            range: NSRange(location: offset, length: max(1, line.utf16.count)),
+        let range: NSRange
+        if !line.isEmpty {
+            range = NSRange(location: offset, length: line.utf16.count)
+        } else if offset < documentLength {
+            range = NSRange(location: offset, length: 1)
+        } else if offset > 0 {
+            range = NSRange(location: offset - 1, length: 1)
+        } else {
+            range = NSRange(location: 0, length: 0)
+        }
+        return TextHighlight(
+            range: range,
             kind: kind
         )
     }
@@ -1002,22 +1093,27 @@ public enum DiffEngine {
         return merged
     }
 
-    private static func groupedMatches(_ left: [String], _ right: [String]) -> [Match] {
+    private static func groupedMatches(
+        _ left: [String],
+        _ right: [String],
+        context: inout ComparisonContext
+    ) -> [Match] {
         if right.lexicographicallyPrecedes(left) {
-            return groupedMatchesInCanonicalOrder(right, left).map {
+            return groupedMatchesInCanonicalOrder(right, left, context: &context).map {
                 Match(left: $0.right, right: $0.left)
             }
         }
-        return groupedMatchesInCanonicalOrder(left, right)
+        return groupedMatchesInCanonicalOrder(left, right, context: &context)
     }
 
     private static func groupedMatchesInCanonicalOrder(
         _ left: [String],
-        _ right: [String]
+        _ right: [String],
+        context: inout ComparisonContext
     ) -> [Match] {
         guard !left.isEmpty, !right.isEmpty else { return [] }
-        guard fitsMatrix(left.count, right.count) else {
-            return orderedMatches(left, right)
+        guard fitsMatrix(left.count, right.count, limit: context.matrixCellLimit) else {
+            return orderedMatches(left, right, context: &context)
         }
 
         var cells = Array(
@@ -1093,8 +1189,39 @@ public enum DiffEngine {
         return cell.cost + baseCost + (opensGap ? gapOpeningCost : 0)
     }
 
-    private static func fitsMatrix(_ leftCount: Int, _ rightCount: Int) -> Bool {
-        boundedCellCount(leftCount, rightCount).map { $0 <= matrixCellLimit } == true
+    private static func fitsMatrix(
+        _ leftCount: Int,
+        _ rightCount: Int,
+        limit: Int
+    ) -> Bool {
+        boundedCellCount(leftCount, rightCount).map { $0 <= limit } == true
+    }
+}
+
+private struct ComparisonContext {
+    let matrixCellLimit: Int
+    let initialCellBudget: Int
+    var remainingCells: Int
+    var usedPatienceAnchors = false
+    var usedLinearSpaceAlignment = false
+    var usedPositionalFallback = false
+    var usedPrefixSimilarityFallback = false
+    var exhaustedWorkBudget = false
+
+    var diagnostics: DiffDiagnostics {
+        let bounded = exhaustedWorkBudget
+            || usedPositionalFallback
+            || usedPrefixSimilarityFallback
+        return DiffDiagnostics(
+            quality: bounded ? .bounded : (usedPatienceAnchors ? .anchored : .exact),
+            usedPatienceAnchors: usedPatienceAnchors,
+            usedLinearSpaceAlignment: usedLinearSpaceAlignment,
+            exhaustedWorkBudget: exhaustedWorkBudget,
+            usedPositionalFallback: usedPositionalFallback,
+            usedPrefixSimilarityFallback: usedPrefixSimilarityFallback,
+            exactMatrixCellLimit: matrixCellLimit,
+            workCellBudget: initialCellBudget
+        )
     }
 }
 

@@ -29,5 +29,10 @@ let package = Package(
             dependencies: ["Inkling", "InklingDiff"],
             path: "Tests/InklingTests"
         ),
+        .testTarget(
+            name: "InklingDiffTests",
+            dependencies: ["InklingDiff"],
+            path: "Tests/InklingDiffTests"
+        ),
     ]
 )

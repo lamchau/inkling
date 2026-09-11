@@ -98,6 +98,13 @@ struct InklingCommands: Commands {
         }
 
         CommandMenu(L10n.string("Compare")) {
+            strategyButton(.semantic, key: "1")
+            strategyButton(.word, key: "2")
+            strategyButton(.character, key: "3")
+            strategyButton(.line, key: "4")
+
+            Divider()
+
             Button(L10n.string("Previous Change")) {
                 session.previousChange()
             }
@@ -143,6 +150,21 @@ struct InklingCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command, .option])
         }
+    }
+
+    private func strategyButton(
+        _ strategy: DiffStrategy,
+        key: KeyEquivalent
+    ) -> some View {
+        Button {
+            settings.strategy = strategy
+        } label: {
+            Label(
+                strategy.title,
+                systemImage: settings.strategy == strategy ? "checkmark" : ""
+            )
+        }
+        .keyboardShortcut(key, modifiers: [.command, .control])
     }
 }
 

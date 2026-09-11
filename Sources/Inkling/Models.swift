@@ -30,6 +30,13 @@ struct CaretPosition: Equatable {
 struct LoadedTextFile: Sendable {
     let url: URL
     let text: String
+    let byteCount: Int
+
+    init(url: URL, text: String, byteCount: Int? = nil) {
+        self.url = url
+        self.text = text
+        self.byteCount = byteCount ?? text.utf8.count
+    }
 }
 
 enum InklingError: LocalizedError {
