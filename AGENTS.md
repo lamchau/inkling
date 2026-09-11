@@ -26,9 +26,12 @@ Requirements are macOS 14+, Xcode 16+, Swift 6, and `just`.
   and find indicators.
 - `DiffSession` owns loaded files, revisions, dirty state, async recomputation,
   navigation, saving, and block transfer.
-- `DiffEngine` produces line, phrase, word, and character differences.
-- `DiffConfiguration` controls internal line-pair sensitivity independently
-  from semantic word refinement.
+- The dependency-free `InklingDiff` target owns comparison strategies, the
+  engine, result models, diagnostics, and validation.
+- The `Inkling` executable consumes `InklingDiff`; keep file I/O, editor state,
+  revision stamping, saving, and block transfer app-local.
+- `DiffConfiguration` validates line-pair sensitivity independently from
+  semantic word refinement and throws rather than trapping on invalid values.
 - `TextFileService` performs strict supported-encoding decoding and explicit
   file writes.
 - `L10n` resolves the String Catalog from the packaged SwiftPM resource bundle.
@@ -65,7 +68,9 @@ Requirements are macOS 14+, Xcode 16+, Swift 6, and `just`.
   whole-line block-transfer unit.
 - Keep matching bounded: full matrices are capped, large regions use ordered
   unique anchors, and unresolved gaps use linear-space matching within a shared
-  work budget.
+  work budget. Preserve public exact/anchored/bounded diagnostics.
+- Keep public ranges UTF-16 compatible and validate results against both source
+  strings before clients trust or render them.
 - Navigation centers and emphasizes a change without replacing the user's
   selection.
 - Copy Block validates document revisions and ranges, then mutates through the

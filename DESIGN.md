@@ -78,7 +78,8 @@ The interface should open directly into a 2-file task, avoid project setup,
 and keep controls close to the comparison. Expensive matching is bounded and
 performed away from the main actor. Large inputs use stable unique anchors and
 linear-space gap matching before falling back to coarse bounded behavior; stale
-results are discarded.
+results are discarded. Files at or above 1 MiB require confirmation before the
+comparison begins, and bounded results are disclosed in the status area.
 
 ## Interaction Model
 
@@ -95,6 +96,10 @@ position. It runs vertically between side-by-side panes and horizontally
 between stacked panes. Navigation centers and briefly flashes the semantic
 range while a persistent underline retains orientation. The user's text
 selection remains untouched.
+
+Comparison strategy is available in the header and directly from the Compare
+menu with Control-Command-1 through Control-Command-4. Switching strategy
+recomputes the same documents without changing edits or layout.
 
 ### Edit and transfer
 

@@ -4,7 +4,7 @@ Each directory contains a `left.txt` and `right.txt` pair for manual Inkling
 testing.
 
 Run `just corpus` to report highlight coverage, span counts, change counts,
-hunks, and runtime for every Inkling algorithm and fixture.
+hunks, and runtime for every Inkling comparison strategy and fixture.
 
 | Pair | Exercises |
 | --- | --- |

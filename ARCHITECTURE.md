@@ -15,7 +15,8 @@ flowchart LR
     Bridge --> Editor[NSTextView]
     Bridge --> Gutter[LineNumberGutterView]
     Session --> Files[TextFileService]
-    Session --> Engine[DiffEngine]
+    Session --> Library[InklingDiff]
+    Library --> Engine[DiffEngine]
     Engine --> Result[DiffResult]
     Result --> Session
     Session --> View
@@ -30,10 +31,10 @@ flowchart LR
 | `DiffTextView.swift` | SwiftUI/AppKit bridge, editing, wrapping, temporary highlights, navigation reveal, drag interception, scroll/caret sync |
 | `LineNumberRulerView.swift` | Independent line-number gutter |
 | `DiffSession.swift` | URLs, text, saved baselines, revisions, async refresh, navigation, transfer, saving, alerts |
-| `DiffEngine.swift` | Line alignment, changed-line pairing, semantic/token/character refinement |
-| `Models.swift` | Diff ranges, changes, hunks, highlights, loaded files, errors |
+| `Sources/InklingDiff` | Reusable, dependency-free comparison engine and public result contract |
+| `Sources/Inkling/Models.swift` | App-only loaded-file and interaction models |
 | `TextFileService.swift` | Size checks, strict decoding, binary rejection, atomic UTF-8 writes |
-| `AppSettings.swift` | Persisted algorithms, layout, shortcuts, editor options, highlight style, palette |
+| `AppSettings.swift` | Persisted strategies, layout, shortcuts, editor options, highlight style, palette |
 | `L10n.swift` | String Catalog lookup from the packaged resource bundle |
 
 ## State Ownership
@@ -73,7 +74,7 @@ The pipeline is:
 4. Turn gaps between anchors into changed line blocks.
 5. Pair similar lines inside each block using character similarity and ordered
    dynamic programming.
-6. Refine each pair according to the selected algorithm. Semantic and
+6. Refine each pair according to the selected strategy. Semantic and
    character matching use insertion/deletion costs plus a gap-opening penalty
    to avoid needlessly fragmented edit spans:
    - semantic: stable word anchors, phrase classification, similar-word pairing,
@@ -85,8 +86,8 @@ The pipeline is:
 8. Derive ordered top-level `DiffChange` ranges and their containing
    `DiffHunk`.
 
-Full dynamic-programming matrices are limited to 250,000 cells. Matching has a
-shared 2,000,000-cell work budget: larger regions retain common boundaries,
+Full dynamic-programming matrices are limited to 1,000,000 cells. Matching has
+a shared 8,000,000-cell work budget: larger regions retain common boundaries,
 partition around ordered unique anchors, and use Hirschberg linear-space
 matching for unresolved gaps within the remaining budget. This bounds memory
 while preserving useful interior anchors that the former prefix/suffix fallback
@@ -95,6 +96,32 @@ discarded.
 `DiffConfiguration` separates the line-pair similarity threshold from
 word-pair refinement. The default remains `0.5`; tests and future advanced
 controls can tune line pairing without changing semantic word behavior.
+Construction throws `DiffConfigurationError` for non-finite or out-of-range
+thresholds instead of terminating the client process.
+
+## Public Result Contract
+
+`InklingDiff` exposes strategies, configuration, highlights, semantic changes,
+line hunks, diagnostics, and validation without depending on the macOS app.
+Ranges and navigation offsets are UTF-16 based for Foundation interoperability.
+
+`DiffResult.validate(left:right:)` verifies:
+
+- every highlight and change range is in bounds and lands on valid `String`
+  indices;
+- every hunk line range belongs to its source document;
+- hunk and change IDs are sequential;
+- every change references an existing hunk;
+- every navigation offset belongs to its source document.
+
+`DiffDiagnostics.quality` has three intentionally distinct meanings:
+
+- `exact`: no coarse fallback was needed; linear-space LCS can still be exact;
+- `anchored`: ordered unique anchors partitioned a large comparison;
+- `bounded`: the work budget required positional or prefix-similarity fallback.
+
+The detailed flags and configured limits let library clients decide whether to
+render, warn, retry with another policy, or reject a degraded result.
 
 ## Recompute and Revision Safety
 
@@ -118,9 +145,10 @@ Interactive edits are debounced by 120 milliseconds. CPU-bound comparison runs
 in a detached user-initiated task using immutable, `Sendable` inputs. Cancelled
 or stale results are discarded before observable state changes.
 
-Copy Block also requires the result's stamped document revision to match the
-current session revision. This prevents a visible-but-outdated hunk from
-mutating a newer document.
+`DiffSession` records the document revision associated with each published
+result. Copy Block requires it to match the current session revision, preventing
+a visible-but-outdated hunk from mutating a newer document while keeping
+app-specific revision state out of the reusable library.
 
 ## Native Editor Bridge
 
@@ -187,8 +215,9 @@ limit, and strictly decodes:
 - UTF-16 big-endian with BOM.
 
 Null bytes and malformed encodings are rejected as binary or unsupported data.
-Writes are atomic UTF-8. Original encoding and BOM preservation are not yet
-implemented.
+Files of 1 MiB or more require explicit confirmation before loading; files over
+5 MiB are rejected. Writes are atomic UTF-8. Original encoding and BOM
+preservation are not yet implemented.
 
 ## Resources and Packaging
 
@@ -216,10 +245,12 @@ The test suite uses Swift Testing and covers:
 - horizontal and vertical pane geometry and AppKit highlight rendering;
 - persisted settings and custom palettes;
 - grouped edit alignment, large-input matching, and configurable line pairing;
+- exhaustive short-input oracle checks and seeded randomized symmetry checks;
+- public result validation and exact/anchored/bounded diagnostics;
 - corpus coverage, fragmentation, hunk pairing, and timing across every manual
   fixture.
 
 Use focused tests while iterating and run `just check` before landing changes
 that affect application behavior or packaging.
 
-`just corpus` emits one stable metrics line per fixture and Inkling algorithm.
+`just corpus` emits one stable metrics line per fixture and comparison strategy.

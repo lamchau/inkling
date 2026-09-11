@@ -130,6 +130,7 @@ Run `just` with no arguments to list every recipe.
 | Copy block right / left | `Command-Option-Right` / `Command-Option-Left` |
 | Toggle ignored whitespace | `Command-Option-W` |
 | Swap sides | `Command-Option-S` |
+| Semantic / word / character / line strategy | `Control-Command-1` through `4` |
 
 Navigation shortcuts and the default comparison layout can be changed in
 Settings. Switching layouts preserves the open files, edits, dirty state, and
@@ -146,7 +147,38 @@ current comparison.
 - UTF-8, UTF-8 with BOM, and UTF-16 little- or big-endian text with a BOM are
   accepted.
 - Files containing null bytes and files larger than 5 MiB are rejected.
+- Files of 1 MiB or more require confirmation before comparison.
 - Saves are atomic and currently write UTF-8.
+
+## Using the Diff Library
+
+`InklingDiff` is a dependency-free Swift library product. Add this package to
+another Swift package, depend on the `InklingDiff` product, and compare strings
+without importing AppKit or the Inkling application:
+
+```swift
+import InklingDiff
+
+let result = DiffEngine.compare(
+    left: original,
+    right: revised,
+    ignoreWhitespace: false,
+    strategy: .semantic
+)
+try result.validate(left: original, right: revised)
+```
+
+Results use UTF-16 `NSRange` values so clients can apply highlights directly to
+Foundation and AppKit text storage. Each result also reports whether matching
+was exact, stable-anchor-assisted, or bounded. Validation rejects malformed
+ranges, line hunks, identifiers, references, and navigation offsets before a
+client renders or acts on a result.
+
+The trust suite exhaustively checks every pair of short character strings
+against an independent LCS oracle, then runs seeded randomized Unicode and
+whitespace comparisons for determinism, symmetry, and structural validity.
+These tests establish strong evidence for the covered input space; they are not
+a claim that every possible input has been formally verified.
 
 ## Current Scope
 
@@ -161,7 +193,9 @@ provide:
 - session persistence or a change-list sidebar.
 
 Large comparisons use bounded matching fallbacks to protect responsiveness, so
-extremely large or highly reordered changes may receive coarser alignment.
+extremely large or highly reordered changes may receive coarser alignment. The
+app discloses that outcome in its status text rather than presenting it as an
+exact result.
 
 ## Development
 
@@ -169,7 +203,7 @@ extremely large or highly reordered changes may receive coarser alignment.
 just             # List recipes
 just build       # Build the Swift executable
 just test        # Run Swift Testing suites
-just corpus      # Report algorithm metrics for every fixture
+just corpus      # Report strategy metrics for every fixture
 just app         # Package and ad-hoc sign the app
 just verify-app  # Verify resources, signature, and launch
 just check       # Run tests and app verification
