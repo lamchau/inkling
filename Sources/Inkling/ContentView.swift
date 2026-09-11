@@ -1,4 +1,5 @@
 import AppKit
+import InklingDiff
 import SwiftUI
 
 enum EditorLayout {

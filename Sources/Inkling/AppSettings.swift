@@ -1,14 +1,10 @@
 import AppKit
+import InklingDiff
 import Observation
 import SwiftUI
 
-enum DiffAlgorithm: String, CaseIterable, Identifiable, Sendable {
-    case semantic
-    case word
-    case character
-    case line
-
-    var id: Self { self }
+extension DiffAlgorithm: Identifiable {
+    public var id: Self { self }
 
     var title: String {
         switch self {

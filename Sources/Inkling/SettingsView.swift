@@ -1,3 +1,4 @@
+import InklingDiff
 import SwiftUI
 
 struct SettingsView: View {

@@ -8,11 +8,17 @@ let package = Package(
         .macOS(.v14),
     ],
     products: [
+        .library(name: "InklingDiff", targets: ["InklingDiff"]),
         .executable(name: "Inkling", targets: ["Inkling"]),
     ],
     targets: [
+        .target(
+            name: "InklingDiff",
+            path: "Sources/InklingDiff"
+        ),
         .executableTarget(
             name: "Inkling",
+            dependencies: ["InklingDiff"],
             path: "Sources/Inkling",
             resources: [
                 .process("Resources"),
@@ -20,7 +26,7 @@ let package = Package(
         ),
         .testTarget(
             name: "InklingTests",
-            dependencies: ["Inkling"],
+            dependencies: ["Inkling", "InklingDiff"],
             path: "Tests/InklingTests"
         ),
     ]

@@ -1,37 +1,14 @@
 import AppKit
 import Foundation
+import InklingDiff
 
 enum DiffSide: Sendable {
     case left
     case right
 }
 
-enum HighlightKind: Equatable, Sendable {
-    case addition
-    case deletion
-    case character(Int)
-    case word(Int)
-    case phrase(Int)
-
-    var category: ChangeCategory {
-        switch self {
-        case .addition: .addition
-        case .deletion: .deletion
-        case .character: .character
-        case .word: .word
-        case .phrase: .phrase
-        }
-    }
-}
-
-enum ChangeCategory: String, CaseIterable, Identifiable, Sendable {
-    case character
-    case word
-    case phrase
-    case addition
-    case deletion
-
-    var id: Self { self }
+extension ChangeCategory: Identifiable {
+    public var id: Self { self }
 
     var title: String {
         switch self {
@@ -44,71 +21,10 @@ enum ChangeCategory: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct TextHighlight: Equatable, Sendable {
-    let range: NSRange
-    let kind: HighlightKind
-}
-
 struct CaretPosition: Equatable {
     let line: Int
     let column: Int
     let source: DiffSide
-}
-
-struct DiffHunk: Identifiable, Equatable, Sendable {
-    let id: Int
-    let leftRange: Range<Int>
-    let rightRange: Range<Int>
-    let leftNavigationOffset: Int
-    let rightNavigationOffset: Int
-}
-
-struct DiffChange: Identifiable, Equatable, Sendable {
-    let id: Int
-    let hunkID: Int
-    let leftRange: NSRange?
-    let rightRange: NSRange?
-    let leftNavigationOffset: Int
-    let rightNavigationOffset: Int
-}
-
-struct DiffResult: Equatable, Sendable {
-    let leftHighlights: [TextHighlight]
-    let rightHighlights: [TextHighlight]
-    let hunks: [DiffHunk]
-    let changes: [DiffChange]
-    let documentRevision: Int
-
-    init(
-        leftHighlights: [TextHighlight],
-        rightHighlights: [TextHighlight],
-        hunks: [DiffHunk],
-        changes: [DiffChange],
-        documentRevision: Int = 0
-    ) {
-        self.leftHighlights = leftHighlights
-        self.rightHighlights = rightHighlights
-        self.hunks = hunks
-        self.changes = changes
-        self.documentRevision = documentRevision
-    }
-
-    func stamped(with documentRevision: Int) -> DiffResult {
-        DiffResult(
-            leftHighlights: leftHighlights,
-            rightHighlights: rightHighlights,
-            hunks: hunks,
-            changes: changes,
-            documentRevision: documentRevision
-        )
-    }
-
-    static let empty = DiffResult(
-        leftHighlights: [],
-        rightHighlights: [],
-        hunks: [],
-        changes: []
-    )
 }
 
 struct LoadedTextFile: Sendable {
